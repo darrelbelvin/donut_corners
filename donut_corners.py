@@ -1,5 +1,9 @@
 import cv2
 import numpy as np
+from scipy import signal
+from visualizing_donut_corners import *
+
+from multiprocessing import Pool
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -11,61 +15,91 @@ class DonutCorners():
         else:
             self.src = image
 
-        # sobel params
-        self.ksize = 3
-        self.scale = 1
-        self.delta = 0
-        self.ddepth = cv2.CV_8U
+        self.peaks_params = {'height':30, 'threshold':None, 'distance':None, 'prominence':None, 'width':None, 'wlen':None, 'rel_height':0.5, 'plateau_size':None}
+        self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_8U, 'borderType':cv2.BORDER_DEFAULT}
 
         # donut params
-        self.radii = [10, 20, 40]
+        self.radii = [20, 40]
         self.round = False
+        self.masks = [DonutCorners.donut_mask(r, self.round) for r in self.radii]
         self.nearest = True
 
         # grid params
         self.grid_size = 10
 
         self.__dict__.update(kwargs)
-
+        self.scored = None
+        
         self.preprocess()
 
     def preprocess(self):
+        find_peaks = signal.find_peaks
 
-        edges_x = cv2.Sobel(self.src, self.ddepth, dx=1, dy=0, ksize=self.ksize,
-                            scale=self.scale, delta=self.delta, borderType=cv2.BORDER_DEFAULT)
-        edges_y = cv2.Sobel(self.src, self.ddepth, dx=0, dy=1, ksize=self.ksize,
-                            scale=self.scale, delta=self.delta, borderType=cv2.BORDER_DEFAULT)
+        edges_x = cv2.Sobel(self.src, dx=1, dy=0, **self.sobel_params)
+        edges_y = cv2.Sobel(self.src, dx=0, dy=1, **self.sobel_params)
 
-        edges_x_max = np.max(edges_x, axis=-1, keepdims=True)
-        edges_y_max = np.max(edges_y, axis=-1, keepdims=True)
-        self.slopes = np.append(edges_x_max, edges_y_max, axis=-1)
+        edges_x_max = np.max(edges_x, axis=-1)
+        edges_y_max = np.max(edges_y, axis=-1)
+        self.slopes = np.stack((edges_y_max, edges_x_max), axis=-1)
+        
+        interest_x = np.zeros(edges_x_max.shape, dtype=bool)
+        interest_y = interest_x.copy()
+
+        for edges, interest in ((edges_y_max, interest_y), (edges_x_max, interest_x)):
+            for data, bools in zip(edges, interest):
+                peaks = find_peaks(data, **self.peaks_params)
+                bools[peaks[0].astype(int)] = True
+        
+        self.interest = np.stack((interest_y, interest_x), axis=-1)
 
 
     def score_point(self, point):
-        dozen = [self.bake_donut(point, radius) for radius in self.radii]
+        dozen = [self.bake_donut(point, mask) for mask in self.masks]
         return sum(dozen)
 
 
-    def bake_donut(self, point, radius):
+    def bake_donut(self, point, mask):
         # identify points of interest
-        pois = self.donut(point, radius)
+        m2 = self.clip_mask(mask + point)
+        pois = m2[np.nonzero(np.any(dc.interest[m2[:,0],m2[:,1]], axis=-1))]
 
         # trace rays from each point
         rays = [self.raytrace(p, point) for p in pois]
 
         # find the strength of each ray
         strengths = [DonutCorners.score_ray(ray) for ray in rays]
+        
+        if len(strengths) > 4:
+            return sum(np.partition(strengths, -4)[-4:])
+        else:
+            return sum(strengths)
 
-        return sum(strengths[:4])
+
+    @classmethod
+    def donut_mask(cls, radius, round=False):
+        if round:
+            pass
+
+        d = 1+radius * 2
+        mask = np.empty((d*4-4,2),dtype=int)
+        edge = np.arange(d) - radius
+        mask[:d, 0] = radius
+        mask[:d, 1] = edge
+        mask[d-1:2*d-1,0] = -edge
+        mask[d-1:2*d-1,1] = radius
+        mask[2*d-2:3*d-2,0] = -radius
+        mask[2*d-2:3*d-2,1] = -edge
+        mask[3*d-3:4*d-4,0] = edge[:-1]
+        mask[3*d-3:4*d-4,1] = -radius
+        return mask
 
 
-    def donut(self, point, radius):
-        pois = []
-        return pois
+    def clip_mask(self, mask):
+        return mask[np.all((mask >= 0) & (mask < self.src.shape[:-1]), axis=1)]
 
 
     def raytrace(self, p_1, p_2):
-        floor = np.floor
+        round = np.round
         rnd = np.round
         uv = p_2 - p_1
         l = np.linalg.norm(uv)
@@ -73,24 +107,51 @@ class DonutCorners():
         perp = DonutCorners.rot90.dot(uv)
 
         if self.nearest:
-            return [perp.dot(self.slopes[tuple(p_1 + floor(uv*i))]) for i in range(rnd(l))]
+            return [perp.dot(self.slopes[tuple(p_1 + round(uv*i).astype(int))]) for i in range(1,l.astype(int))]
         
         # interpolate here
         return None
 
 
+    def score_row(self, y):
+        return [self.score_point([y,x]) for x in range(self.src.shape[1])]
+
+    def score_all(self, multithread = True):
+        
+        if multithread:
+            with Pool(7) as p:
+                out = p.map(self.score_row, range(self.src.shape[0]))
+        
+        else:
+            out = np.array([self.score_row(y) for y in range(img.shape[0])])
+        
+        self.scored = out
+        return out
+
+
     @classmethod
     def score_ray(cls, profile):
-        pass
+        return np.average(np.abs(profile))
 
 
 if __name__ == "__main__":
+
     img = cv2.imread('images/bldg-1.jpg')
     #crop
-    img = img[500:1000, 500:1000]
+    img = img[0:150, 750:850]
+    
     dc = DonutCorners(img)
     
-    show = dc.slopes[...,1]
-    print(show.shape)
-    cv2.imshow('Display',show)
-    cv2.waitKey(30000)
+    print(img.shape)
+
+    import sys
+    dc.score_all('pydevd' not in sys.modules)
+
+    show_imgs((dc.scored, np.pad(dc.slopes,((0,0),(0,0),(0,1)), mode='constant'), np.pad(dc.interest*255,((0,0),(0,0),(0,1)), mode='constant'), img))
+    
+    #print(dc.score_point(pt))
+
+    #show_imgs((dc.interest[...,0], dc.slopes[...,0]))
+    
+    print('done')
+    print('leaving')
