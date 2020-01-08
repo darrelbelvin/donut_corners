@@ -61,7 +61,8 @@ class DonutCorners():
     def bake_donut(self, point, mask):
         # identify points of interest
         m2 = self.clip_mask(mask + point)
-        pois = m2[np.nonzero(np.any(dc.interest[m2[:,0],m2[:,1]], axis=-1))]
+        pois = self.get_pois(m2)
+        #pois = m2[np.nonzero(np.any(dc.interest[m2[:,0],m2[:,1]], axis=-1))]
 
         # trace rays from each point
         rays = [self.raytrace(p, point) for p in pois]
@@ -74,6 +75,9 @@ class DonutCorners():
         else:
             return sum(strengths)
 
+
+    def get_pois(self, mask):
+        return mask[np.nonzero(np.any(dc.interest[mask[:,0],mask[:,1]], axis=-1))]
 
     @classmethod
     def donut_mask(cls, radius, round=False):
@@ -99,18 +103,35 @@ class DonutCorners():
 
 
     def raytrace(self, p_1, p_2):
-        round = np.round
+        if self.nearest:
+            return self.profile_ray(self.get_ray(p_1, p_2))
+
+        # rnd = np.round
+        # uv = p_2 - p_1
+        # l = np.linalg.norm(uv)
+        # uv = uv/l
+        # perp = DonutCorners.rot90.dot(uv)
+
+        # if self.nearest:
+        #     return [perp.dot(self.slopes[tuple(p_1 + round(uv*i).astype(int))]) for i in range(1,l.astype(int))]
+        
+        # interpolate here
+        return None
+
+
+    def get_ray(self, p_1, p_2):
         rnd = np.round
         uv = p_2 - p_1
         l = np.linalg.norm(uv)
         uv = uv/l
         perp = DonutCorners.rot90.dot(uv)
 
-        if self.nearest:
-            return [perp.dot(self.slopes[tuple(p_1 + round(uv*i).astype(int))]) for i in range(1,l.astype(int))]
-        
-        # interpolate here
-        return None
+        return uv, perp, np.array([p_1 + rnd(uv*i).astype(int) for i in np.arange(1,l)])
+
+
+    def profile_ray(self, ray):
+        uv, perp, coords = ray
+        return [perp.dot(coord) for coord in coords]
 
 
     def score_row(self, y):
@@ -139,17 +160,21 @@ if __name__ == "__main__":
     img = cv2.imread('images/bldg-1.jpg')
     #crop
     img = img[0:150, 750:850]
-    
+    pt = [50,50]
+
     dc = DonutCorners(img)
     
     print(img.shape)
 
-    import sys
-    dc.score_all('pydevd' not in sys.modules)
+    #import sys
+    #dc.score_all('pydevd' not in sys.modules)
 
-    show_imgs((dc.scored, np.pad(dc.slopes,((0,0),(0,0),(0,1)), mode='constant'), np.pad(dc.interest*255,((0,0),(0,0),(0,1)), mode='constant'), img))
+    #show_std(dc)
     
-    #print(dc.score_point(pt))
+    print(dc.score_point(pt))
+
+    dm = paint_donut(get_2dmap(dc, 'interest'), dc, pt, rays = True)
+    show_imgs((dm, dc.src))
 
     #show_imgs((dc.interest[...,0], dc.slopes[...,0]))
     
