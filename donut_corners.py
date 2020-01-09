@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from scipy import signal
-from visualizing_donut_corners import *
 
 from multiprocessing import Pool
 
@@ -55,7 +54,7 @@ class DonutCorners():
 
     def score_point(self, point):
         dozen = [self.bake_donut(point, mask) for mask in self.masks]
-        return sum(dozen)
+        return sum([self.score_donut(donut) for donut in dozen])
 
 
     def bake_donut(self, point, mask):
@@ -65,11 +64,18 @@ class DonutCorners():
         #pois = m2[np.nonzero(np.any(dc.interest[m2[:,0],m2[:,1]], axis=-1))]
 
         # trace rays from each point
-        rays = [self.raytrace(p, point) for p in pois]
+        rays = np.array([self.get_ray(p, point) for p in pois])
+
+        profiles = np.array([self.profile_ray(ray) for ray in rays])
 
         # find the strength of each ray
-        strengths = [DonutCorners.score_ray(ray) for ray in rays]
+        strengths = np.array([DonutCorners.score_ray(profile) for profile in profiles])
         
+        return rays, profiles, strengths, m2
+
+
+    def score_donut(self, donut):
+        rays, profiles, strengths, mask = donut
         if len(strengths) > 4:
             return sum(np.partition(strengths, -4)[-4:])
         else:
@@ -77,7 +83,8 @@ class DonutCorners():
 
 
     def get_pois(self, mask):
-        return mask[np.nonzero(np.any(dc.interest[mask[:,0],mask[:,1]], axis=-1))]
+        return mask[np.nonzero(np.any(self.interest[mask[:,0],mask[:,1]], axis=-1))]
+
 
     @classmethod
     def donut_mask(cls, radius, round=False):
@@ -102,23 +109,6 @@ class DonutCorners():
         return mask[np.all((mask >= 0) & (mask < self.src.shape[:-1]), axis=1)]
 
 
-    def raytrace(self, p_1, p_2):
-        if self.nearest:
-            return self.profile_ray(self.get_ray(p_1, p_2))
-
-        # rnd = np.round
-        # uv = p_2 - p_1
-        # l = np.linalg.norm(uv)
-        # uv = uv/l
-        # perp = DonutCorners.rot90.dot(uv)
-
-        # if self.nearest:
-        #     return [perp.dot(self.slopes[tuple(p_1 + round(uv*i).astype(int))]) for i in range(1,l.astype(int))]
-        
-        # interpolate here
-        return None
-
-
     def get_ray(self, p_1, p_2):
         rnd = np.round
         uv = p_2 - p_1
@@ -136,6 +126,7 @@ class DonutCorners():
 
     def score_row(self, y):
         return [self.score_point([y,x]) for x in range(self.src.shape[1])]
+
 
     def score_all(self, multithread = True):
         
@@ -156,6 +147,7 @@ class DonutCorners():
 
 
 if __name__ == "__main__":
+    from visualizing_donut_corners import *
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
@@ -172,8 +164,9 @@ if __name__ == "__main__":
     #show_std(dc)
     
     print(dc.score_point(pt))
-
-    dm = paint_donut(get_2dmap(dc, 'interest'), dc, pt, rays = True)
+    data = list(np.ndindex(dc.src.shape[:2]))
+    
+    dm = paint_donut(get_2dimg(dc, 'slopes'), dc, pt, rays = True)
     show_imgs((dm, dc.src))
 
     #show_imgs((dc.interest[...,0], dc.slopes[...,0]))

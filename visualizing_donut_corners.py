@@ -23,23 +23,38 @@ def show_imgs(imgs):
     plt.show()
 
 def show_std(dc):
-    show_imgs((dc.scored, get_2dmap(dc, 'slopes'), get_2dmap(dc, 'interest'), dc.src))
+    show_imgs((dc.scored, get_2dimg(dc, 'slopes'), get_2dimg(dc, 'interest'), dc.src))
 
-def get_2dmap(dc, maptype = 'slopes'):
-    map = {'slopes': dc.slopes, 'interest': dc.interest * 255}[maptype]
-    return np.pad(map,((0,0),(0,0),(0,1)), mode='constant')
+def get_2dimg(dc, imgtype = 'slopes'):
+    img = {'slopes': dc.slopes, 'interest': dc.interest * 255}[imgtype]
+    return np.pad(img,((0,0),(0,0),(1,0)), mode='constant')
 
-def paint_donut(map, dc: DonutCorners, point, rays = False):
+def paint_donut_old(img, dc: DonutCorners, point, rays = False):
     m2 = dc.clip_mask(dc.masks[0] + point)
-    map = map.copy()
-    map[m2[:,0], m2[:,1]] += 255
+    img = img.copy()
+    img[m2[:,0], m2[:,1]] = 255
     if rays:
-        map = paint_rays(map, dc, point)
-    return map
+        img = paint_rays(img, dc, point)
+    return img
 
-def paint_rays(map, dc: DonutCorners, point):
-    map = map.copy()
-    for poi in dc.get_pois(dc.clip_mask(dc.masks[0] + point)):
-        uv, perp, coords = dc.get_ray(point, poi)
-        map[coords[:,0], coords[:,1]] += 255
-    return map
+
+def paint_donut(img, donut):
+    add_img = np.zeros_like(img)
+
+    rays, profiles, strengths, ring = donut
+
+    for ray, strength in zip(rays, strengths.astype(int)):
+        uv, perp, coords = ray
+        add_img[coords[:,0], coords[:,1]] = np.maximum(add_img[coords[:,0], coords[:,1]], strength)
+
+    max_val = np.max(add_img)
+    if max_val > 0:
+        add_img = add_img / max_val * 255
+    
+    add_img[ring[:,0], ring[:,1], 0] = 255
+
+    return np.max(np.array([img, add_img]), axis=0)
+
+
+def paint_rays(img, dc: DonutCorners, point):
+    return paint_donut(img, dc.bake_donut(point, dc.masks[0]))
