@@ -1,1 +1,9 @@
 .multiline p {white-space: pre ; display: block; unicode-bidi: embed}
+
+.pre {border: thin lightgrey solid; overflow-x: scroll }
+
+.section {width: 33%}
+
+.container {width: 100%; padding-top: 100%; position: relative;}
+
+.incontainer {position: absolute; top: 0; bottom: 0; left: 0; right: 0;}

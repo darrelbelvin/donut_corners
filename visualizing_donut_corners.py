@@ -41,17 +41,22 @@ def paint_donut_old(img, dc: DonutCorners, point, rays = False):
 def paint_donut(img, donut):
     add_img = np.zeros_like(img)
 
-    rays, profiles, strengths, ring = donut
+    rays, profiles, strengths, angles, mask, topids = donut
 
-    for ray, strength in zip(rays, strengths.astype(int)):
+    #for ray, strength in zip(rays, strengths.astype(int)):
+    for i in range(len(rays)):
+        ray = rays[i]
+        strength = strengths[i]
         uv, perp, coords = ray
-        add_img[coords[:,0], coords[:,1]] = np.maximum(add_img[coords[:,0], coords[:,1]], strength)
+        colors = [0,1,2] if i in topids else [0]
+        for color in colors:
+            add_img[coords[:,0], coords[:,1], color] = 255#np.maximum(add_img[coords[:,0], coords[:,1], color], strength)
 
     max_val = np.max(add_img)
     if max_val > 0:
         add_img = add_img / max_val * 255
     
-    add_img[ring[:,0], ring[:,1], 0] = 255
+    add_img[mask[:,0], mask[:,1], 0] = 255
 
     return np.max(np.array([img, add_img]), axis=0)
 

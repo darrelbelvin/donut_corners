@@ -2,7 +2,14 @@ import cv2
 import numpy as np
 from scipy import signal
 
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
+from math import pi, atan2
+
+def get_top_n(lst, n):
+    return np.partition(lst, -n)[-n:] if len(lst) > n else lst
+
+def arg_get_top_n(lst, n):
+    return np.argpartition(lst, -n)[-n:] if len(lst) > n else lst
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -18,7 +25,7 @@ class DonutCorners():
         self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_8U, 'borderType':cv2.BORDER_DEFAULT}
 
         # donut params
-        self.radii = [20, 40]
+        self.radii = [15, 20]
         self.round = False
         self.masks = [DonutCorners.donut_mask(r, self.round) for r in self.radii]
         self.nearest = True
@@ -54,14 +61,13 @@ class DonutCorners():
 
     def score_point(self, point):
         dozen = [self.bake_donut(point, mask) for mask in self.masks]
-        return sum([self.score_donut(donut) for donut in dozen])
+        return np.mean([self.score_donut(donut) for donut in dozen])
 
 
     def bake_donut(self, point, mask):
         # identify points of interest
-        m2 = self.clip_mask(mask + point)
-        pois = self.get_pois(m2)
-        #pois = m2[np.nonzero(np.any(dc.interest[m2[:,0],m2[:,1]], axis=-1))]
+        mask = self.clip_mask(mask + point)
+        pois = self.get_pois(mask)
 
         # trace rays from each point
         rays = np.array([self.get_ray(p, point) for p in pois])
@@ -70,16 +76,17 @@ class DonutCorners():
 
         # find the strength of each ray
         strengths = np.array([DonutCorners.score_ray(profile) for profile in profiles])
-        
-        return rays, profiles, strengths, m2
+
+        angles = np.array([atan2(ray[0][0], ray[0][1]) for ray in rays])
+
+        topids = np.array(self.get_top_rays(strengths, angles), dtype=int)
+
+        return rays, profiles, strengths, angles, mask, topids
 
 
     def score_donut(self, donut):
-        rays, profiles, strengths, mask = donut
-        if len(strengths) > 4:
-            return sum(np.partition(strengths, -4)[-4:])
-        else:
-            return sum(strengths)
+        rays, profiles, strengths, angles, mask, topids = donut
+        return np.mean(strengths[topids]) if len(topids) > 0 else 0
 
 
     def get_pois(self, mask):
@@ -121,7 +128,25 @@ class DonutCorners():
 
     def profile_ray(self, ray):
         uv, perp, coords = ray
-        return [perp.dot(coord) for coord in coords]
+        return [perp.dot(self.slopes[coord[0],coord[1]]) for coord in coords]
+
+
+    def get_top_rays(self, strengths, angles, n = 4, width = 0.4):
+        if len(strengths) == 0:
+            return []
+        
+        strengths = strengths.copy()
+        out = []
+
+        top = np.argmax(strengths)
+
+        while len(out) < n and strengths[top] > 0:
+            out.append(top)
+            diffs = (angles - angles[top]) % (2*pi)
+            strengths[np.argwhere((diffs < width) | (diffs > 2*pi-width))] = 0
+            top = np.argmax(strengths)
+
+        return out
 
 
     def score_row(self, y):
@@ -131,11 +156,13 @@ class DonutCorners():
     def score_all(self, multithread = True):
         
         if multithread:
-            with Pool(7) as p:
+            with Pool(cpu_count() - 1) as p:
                 out = p.map(self.score_row, range(self.src.shape[0]))
         
         else:
-            out = np.array([self.score_row(y) for y in range(img.shape[0])])
+            out = [self.score_row(y) for y in range(img.shape[0])]
+        
+        out = np.array(out)
         
         self.scored = out
         return out
@@ -143,7 +170,7 @@ class DonutCorners():
 
     @classmethod
     def score_ray(cls, profile):
-        return np.average(np.abs(profile))
+        return np.mean(np.abs(profile))
 
 
 if __name__ == "__main__":
@@ -151,8 +178,8 @@ if __name__ == "__main__":
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
-    img = img[0:150, 750:850]
-    pt = [50,50]
+    img = img[25:125, 750:850]
+    pt = [89,8]
 
     dc = DonutCorners(img)
     
