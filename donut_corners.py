@@ -62,11 +62,7 @@ class DonutCorners():
         
         self.interest = np.stack((interest_y, interest_x), axis=-1)
 
-
-    def score_point(self, point):
-        return self.score_donut(self.bake_donut(point))
-
-
+    # information gathering methods
     def bake_donut(self, point):
         # identify points of interest
         mask = self.clip_mask(self.msk0 + np.array(point, dtype=int))
@@ -85,15 +81,6 @@ class DonutCorners():
         topids = np.array(self.get_top_rays(strengths, angles), dtype=int)
 
         return rays, profiles, strengths, angles, mask, topids
-
-
-    def score_donut(self, donut):
-        rays, profiles, strengths, angles, mask, topids = donut
-        return np.sum(strengths[topids]) if len(topids) > 0 else 0
-
-
-    def get_pois(self, mask):
-        return mask[np.nonzero(np.any(self.interest[mask[:,0],mask[:,1]], axis=-1))]
 
 
     @classmethod
@@ -124,6 +111,10 @@ class DonutCorners():
         return mask[np.all((mask >= 0) & (mask < self.src.shape[:-1]), axis=1)]
 
 
+    def get_pois(self, mask):
+        return mask[np.nonzero(np.any(self.interest[mask[:,0],mask[:,1]], axis=-1))]
+
+
     def get_ray(self, p_1, p_2):
         rnd = np.round
         uv = p_2 - p_1
@@ -137,6 +128,26 @@ class DonutCorners():
     def profile_ray(self, ray):
         uv, perp, coords = ray
         return [perp.dot(self.slopes[coord[0],coord[1]]) for coord in coords]
+
+    # scoring methods
+    def get_score(self, point):
+        if self.scored:
+            return self.scored[point[0],point[1]]
+        if np.isnan(self.scored_partial[point[0],point[1]]):
+            #print('here')
+            self.scored_partial[point[0],point[1]] = self.score_point(point)
+        
+        #print(self.scored_partial[point[0],point[1]])
+        return self.scored_partial[point[0],point[1]]
+
+
+    def score_point(self, point):
+        return self.score_donut(self.bake_donut(point))
+
+
+    def score_donut(self, donut):
+        rays, profiles, strengths, angles, mask, topids = donut
+        return np.sum(strengths[topids]) if len(topids) > 0 else 0
 
 
     def get_top_rays(self, strengths, angles, n = 4, width = 0.4):
@@ -156,6 +167,10 @@ class DonutCorners():
 
         return out
 
+    @classmethod
+    def score_ray(cls, profile):
+        return np.mean(np.abs(profile))
+    
 
     def score_row(self, y):
         return [self.score_point([y,x]) for x in range(self.src.shape[1])]
@@ -175,24 +190,8 @@ class DonutCorners():
         self.scored = out
         return out
 
-
-    @classmethod
-    def score_ray(cls, profile):
-        return np.mean(np.abs(profile))
-    
-
-    def get_score(self, point):
-        if self.scored:
-            return self.scored[point[0],point[1]]
-        if np.isnan(self.scored_partial[point[0],point[1]]):
-            #print('here')
-            self.scored_partial[point[0],point[1]] = self.score_point(point)
-        
-        #print(self.scored_partial[point[0],point[1]])
-        return self.scored_partial[point[0],point[1]]
-
-
-    def donut_slider(self, point):
+    # gradiant ascent methods
+    def donut_slider_blind(self, point):
         axis = np.array([[0,1],[1,1],[1,0],[1,-1]])
         ray_len = 2
         for _ in range(100):
@@ -203,7 +202,7 @@ class DonutCorners():
             lr = arg[1] - ray_len
 
             if lr == 0:
-                return point
+               self return point
 
             if abs(lr) == ray_len:
                 point = point + (2 * lr - 1) * axis[arg[0]]
