@@ -30,7 +30,7 @@ def get_2dimg(dc, imgtype = 'slopes'):
     return np.pad(img,((0,0),(0,0),(1,0)), mode='constant')
 
 def paint_donut_old(img, dc: DonutCorners, point, rays = False):
-    m2 = dc.clip_mask(dc.masks[0] + point)
+    m2 = dc.clip_mask(dc.msk0 + point)
     img = img.copy()
     img[m2[:,0], m2[:,1]] = 255
     if rays:
@@ -62,4 +62,4 @@ def paint_donut(img, donut):
 
 
 def paint_rays(img, dc: DonutCorners, point):
-    return paint_donut(img, dc.bake_donut(point, dc.masks[0]))
+    return paint_donut(img, dc.bake_donut(point))

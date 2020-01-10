@@ -17,12 +17,12 @@ class DonutCorners():
             self.src = image
 
         self.peaks_params = {'height':30, 'threshold':None, 'distance':None, 'prominence':None, 'width':None, 'wlen':None, 'rel_height':0.5, 'plateau_size':None}
-        self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_8U, 'borderType':cv2.BORDER_DEFAULT}
+        self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
 
         # donut params
         self.radii = [15, 20]
         self.round = False
-        self.masks = [DonutCorners.donut_mask(r, self.round) for r in self.radii]
+        self.msk0 = DonutCorners.donut_mask(self.radii, self.round)
         self.nearest = True
 
         # grid params
@@ -41,8 +41,15 @@ class DonutCorners():
         edges_x = cv2.Sobel(self.src, dx=1, dy=0, **self.sobel_params)
         edges_y = cv2.Sobel(self.src, dx=0, dy=1, **self.sobel_params)
 
-        edges_x_max = np.max(edges_x, axis=-1)
-        edges_y_max = np.max(edges_y, axis=-1)
+        def absmaxND(a, axis=None):
+            amax = a.max(axis)
+            amin = a.min(axis)
+            return np.where(-amin > amax, amin, amax)
+
+        edges_x_max = absmaxND(edges_x, axis=-1)
+        edges_y_max = absmaxND(edges_y, axis=-1)
+        # edges_x_max = np.max(edges_x, axis=-1)
+        # edges_y_max = np.max(edges_y, axis=-1)
         self.slopes = np.stack((edges_y_max, edges_x_max), axis=-1)
         
         interest_x = np.zeros(edges_x_max.shape, dtype=bool)
@@ -50,20 +57,19 @@ class DonutCorners():
 
         for edges, interest in ((edges_y_max, interest_y), (edges_x_max, interest_x)):
             for data, bools in zip(edges, interest):
-                peaks = find_peaks(data, **self.peaks_params)
+                peaks = find_peaks(np.abs(data), **self.peaks_params)
                 bools[peaks[0].astype(int)] = True
         
         self.interest = np.stack((interest_y, interest_x), axis=-1)
 
 
     def score_point(self, point):
-        dozen = [self.bake_donut(point, mask) for mask in self.masks]
-        return np.mean([self.score_donut(donut) for donut in dozen])
+        return self.score_donut(self.bake_donut(point))
 
 
-    def bake_donut(self, point, mask):
+    def bake_donut(self, point):
         # identify points of interest
-        mask = self.clip_mask(mask + np.array(point, dtype=int))
+        mask = self.clip_mask(self.msk0 + np.array(point, dtype=int))
         pois = self.get_pois(mask)
 
         # trace rays from each point
@@ -83,7 +89,7 @@ class DonutCorners():
 
     def score_donut(self, donut):
         rays, profiles, strengths, angles, mask, topids = donut
-        return np.mean(strengths[topids]) if len(topids) > 0 else 0
+        return np.sum(strengths[topids]) if len(topids) > 0 else 0
 
 
     def get_pois(self, mask):
@@ -91,22 +97,27 @@ class DonutCorners():
 
 
     @classmethod
-    def donut_mask(cls, radius, round=False):
+    def donut_mask(cls, radii, round=False):
         if round:
-            pass
+            raise NotImplementedError
+        
+        mask = []
 
-        d = 1+radius * 2
-        mask = np.empty((d*4-4,2),dtype=int)
-        edge = np.arange(d) - radius
-        mask[:d, 0] = radius
-        mask[:d, 1] = edge
-        mask[d-1:2*d-1,0] = -edge
-        mask[d-1:2*d-1,1] = radius
-        mask[2*d-2:3*d-2,0] = -radius
-        mask[2*d-2:3*d-2,1] = -edge
-        mask[3*d-3:4*d-4,0] = edge[:-1]
-        mask[3*d-3:4*d-4,1] = -radius
-        return mask
+        for radius in radii:
+            d = 1+radius * 2
+            ring = np.empty((d*4-4,2),dtype=int)
+            edge = np.arange(d) - radius
+            ring[:d, 0] = radius
+            ring[:d, 1] = edge
+            ring[d-1:2*d-1,0] = -edge
+            ring[d-1:2*d-1,1] = radius
+            ring[2*d-2:3*d-2,0] = -radius
+            ring[2*d-2:3*d-2,1] = -edge
+            ring[3*d-3:4*d-4,0] = edge[:-1]
+            ring[3*d-3:4*d-4,1] = -radius
+            mask.append(ring)
+        
+        return np.concatenate(mask)
 
 
     def clip_mask(self, mask):
@@ -139,8 +150,8 @@ class DonutCorners():
 
         while len(out) < n and strengths[top] > 0:
             out.append(top)
-            diffs = (angles - angles[top]) % (2*pi)
-            strengths[np.argwhere((diffs < width) | (diffs > 2*pi-width))] = 0
+            diffs = (angles - angles[top]) % pi
+            strengths[np.argwhere((diffs < width) | (diffs > pi-width))] = 0
             top = np.argmax(strengths)
 
         return out
@@ -200,7 +211,33 @@ class DonutCorners():
                 point = point + lr * axis[arg[0]]
         
         
-        
+    def donut_slider(self, point):
+        axis_def = np.array([[1,1],[1,-1]])
+        ray_len = 3
+
+        for _ in range(100):
+            print(point)
+            rays, profiles, strengths, angles, mask, topids = self.bake_donut(point) 
+
+            if len(rays) == 0:
+                axis = axis_def
+            else:
+                #uv, perp, coords = ray
+                axis = np.array([ray[0] for ray in rays])
+            
+            scores = np.array([[self.get_score((point + ax * i).astype(int)) for i in range(-ray_len, ray_len + 1)] for ax in axis])
+
+            arg = np.unravel_index(np.argmax(scores), shape = scores.shape)
+            
+            lr = arg[1] - ray_len
+
+            if lr == 0:
+                return point
+
+            if abs(lr) == ray_len:
+                point = (point + (2 * lr - 1) * axis[arg[0]]).astype(int)
+            else:
+                point = (point + lr * axis[arg[0]]).astype(int)
         
         # maxfunc = lambda x: -1 * self.score_point(x)
         # shape = self.src.shape[:2]
@@ -222,8 +259,9 @@ if __name__ == "__main__":
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
-    img = img[:200, 650:950]
-    pt = [50,150]
+    #img = img[:200, 650:950]
+    img = img[25:125, 750:850]
+    pt = [10,10]
 
     dc = DonutCorners(img)
     

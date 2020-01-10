@@ -197,18 +197,18 @@ def FigureForProfiles(profiles = [], labels = None):
 
 nl = '\n'
 
-# img = cv2.imread('images/bldg-1.jpg')
-# #crop
-# img = img[25:125, 750:850]
+img = cv2.imread('images/bldg-1.jpg')
+#crop
+img = img[25:125, 750:850]
 
-# dc = DonutCorners(img)
+dc = DonutCorners(img)
 
-import pickle
-dc = pickle.load( open( "save.p", "rb" ) )
+# import pickle
+# dc = pickle.load( open( "save.p", "rb" ) )
 
 
 pt = [-1,-1]
-donut = dc.bake_donut(pt, dc.masks[0])
+donut = dc.bake_donut(pt)
 score = 0
 rayData = {'rays': [], 'profiles': [], 'strengths': [],
            'mask': [], 'angles': [], 'labels': [], 'len': 0}
@@ -270,7 +270,7 @@ def update_point(clickData):
     global donut, pt, rayData, score
     newpt = [clickData['points'][0]['y'], clickData['points'][0]['x']]
     if newpt != pt:
-        donut = dc.bake_donut(newpt, dc.masks[0])
+        donut = dc.bake_donut(newpt)
         rays, profiles, strengths, angles, mask, topids = donut
         angles = [atan2(ray[0][0], ray[0][1]) for ray in rays]
         labels = [f'Ray {i} - str: {strengths[i]:.2f} dir:{angles[i]:.2f}' for i in range(len(rays))]
