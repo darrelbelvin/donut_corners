@@ -195,19 +195,25 @@ def FigureForProfiles(profiles = [], labels = None):
             }
         }
 
-
 nl = '\n'
 
-img = cv2.imread('images/bldg-1.jpg')
-#crop
-img = img[25:125, 750:850]
+# img = cv2.imread('images/bldg-1.jpg')
+# #crop
+# img = img[25:125, 750:850]
 
-dc = DonutCorners(img)
+# dc = DonutCorners(img)
+
+import pickle
+dc = pickle.load( open( "save.p", "rb" ) )
+
+
 pt = [-1,-1]
 donut = dc.bake_donut(pt, dc.masks[0])
 score = 0
 rayData = {'rays': [], 'profiles': [], 'strengths': [],
            'mask': [], 'angles': [], 'labels': [], 'len': 0}
+    
+
 
 app = dash.Dash(__name__)
 
@@ -221,7 +227,7 @@ app.layout = html.Div([
         html.Div([
             InteractiveImageNumpy(
                 image_id='source',
-                image=img
+                image=dc.src
             ),
             html.Div([
                 dcc.Markdown(d("""
@@ -291,7 +297,7 @@ def display_profile_options(clickData):
 
     if clickData:
         update_point(clickData)
-        values = list(range(rayData['len']))
+        values = rayData['topids']
     
     return values
 
@@ -304,7 +310,7 @@ def display_profile_options(clickData):
 
     if clickData:
         update_point(clickData)
-        options = [{'label': rayData['labels'][i], 'value': i} for i in rayData['topids']]
+        options = [{'label': rayData['labels'][i], 'value': i} for i in list(range(rayData['len']))]
     
     return options
 
