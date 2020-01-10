@@ -22,7 +22,7 @@ class DonutCorners():
         # donut params
         self.radii = [15, 20]
         self.round = False
-        self.msk0 = DonutCorners.donut_mask(self.radii, self.round)
+        self.msk0, self.mask_splits = DonutCorners.donut_mask(self.radii, self.round)
         self.nearest = True
 
         # grid params
@@ -78,7 +78,9 @@ class DonutCorners():
 
         angles = np.array([atan2(ray[0][0], ray[0][1]) for ray in rays])
 
-        topids = np.array(self.get_top_rays(strengths, angles), dtype=int)
+        #topids = np.concatenate(self.get_top_rays(strengths, angles), dtype=int)
+        topids = np.concatenate([self.get_top_rays(s, a) for s, a in \
+             zip(np.split(strengths, self.mask_splits), np.split(angles, self.mask_splits))]).astype(int)
 
         return rays, profiles, strengths, angles, mask, topids
 
@@ -104,7 +106,9 @@ class DonutCorners():
             ring[3*d-3:4*d-4,1] = -radius
             mask.append(ring)
         
-        return np.concatenate(mask)
+        splits = np.cumsum([len(ring) for ring in mask[:-1]])
+        
+        return np.concatenate(mask), splits
 
 
     def clip_mask(self, mask):
@@ -131,13 +135,14 @@ class DonutCorners():
 
     # scoring methods
     def get_score(self, point):
+        if not np.all((point >= 0) & (point < self.src.shape[:-1])):
+            return 0
         if self.scored:
             return self.scored[point[0],point[1]]
+        
         if np.isnan(self.scored_partial[point[0],point[1]]):
-            #print('here')
             self.scored_partial[point[0],point[1]] = self.score_point(point)
         
-        #print(self.scored_partial[point[0],point[1]])
         return self.scored_partial[point[0],point[1]]
 
 
@@ -147,13 +152,14 @@ class DonutCorners():
 
     def score_donut(self, donut):
         rays, profiles, strengths, angles, mask, topids = donut
-        return np.sum(strengths[topids]) if len(topids) > 0 else 0
+        return np.mean(strengths[topids]) if len(topids) > 0 else 0
 
 
-    def get_top_rays(self, strengths, angles, n = 4, width = 0.4):
+    def get_top_rays(self, strengths, angles, n = 8, width = 0.4, double_ended = True):
         if len(strengths) == 0:
             return []
         
+        c = 1 if double_ended else 2
         strengths = strengths.copy()
         out = []
 
@@ -161,8 +167,8 @@ class DonutCorners():
 
         while len(out) < n and strengths[top] > 0:
             out.append(top)
-            diffs = (angles - angles[top]) % pi
-            strengths[np.argwhere((diffs < width) | (diffs > pi-width))] = 0
+            diffs = (angles - angles[top]) % (c*pi)
+            strengths[np.argwhere((diffs < width) | (diffs > (c*pi)-width))] = 0
             top = np.argmax(strengths)
 
         return out
@@ -202,7 +208,7 @@ class DonutCorners():
             lr = arg[1] - ray_len
 
             if lr == 0:
-               self return point
+               return point
 
             if abs(lr) == ray_len:
                 point = point + (2 * lr - 1) * axis[arg[0]]
@@ -250,7 +256,6 @@ class DonutCorners():
         # print(maxres.x)
         # print(maxres.fun)
         # return maxres.x
-
 
 
 if __name__ == "__main__":
