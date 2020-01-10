@@ -63,3 +63,24 @@ def paint_donut(img, donut):
 
 def paint_rays(img, dc: DonutCorners, point):
     return paint_donut(img, dc.bake_donut(point))
+
+
+def paint_zones(img, dc: DonutCorners):
+    n=1
+    s1 = np.pad(dc.zones[:,:-n], ((0,0),(n,0)), mode='constant', constant_values = -1)
+    s2 = np.pad(dc.zones[:-n,:], ((n,0),(0,0)), mode='constant', constant_values = -1)
+
+    add_img = ((dc.zones != s1) | (dc.zones != s2)).astype(int)
+    
+    add_img = np.pad(add_img[:,:,None], ((0,0),(0,0),(2,0)), mode='edge')
+
+    return np.max(np.array([img, add_img * 255]), axis=0)
+
+
+def paint_corners(img, dc: DonutCorners):
+    add_img = np.zeros_like(img)
+
+    for point in dc.corners:
+        add_img[point[0], point[1], :] = 255
+    
+    return np.max(np.array([img, add_img]), axis=0)

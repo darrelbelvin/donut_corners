@@ -199,12 +199,13 @@ nl = '\n'
 
 img = cv2.imread('images/bldg-1.jpg')
 #crop
-img = img[25:125, 750:850]
+#img = img[25:125, 750:850]
 
-dc = DonutCorners(img)
+# dc = DonutCorners(img)
+# dc.find_corners()
 
-# import pickle
-# dc = pickle.load( open( "save.p", "rb" ) )
+import pickle
+dc = pickle.load( open( "save.p", "rb" ) )
 
 
 pt = [-1,-1]
@@ -244,8 +245,19 @@ app.layout = html.Div([
             dcc.RadioItems(
                 id='inter-select',
                 options=[{'label': 'Source image', 'value': 'src'}, {'label': 'Sobel slopes', 'value': 'slopes'},
-                         {'label': 'Points of Interest', 'value': 'interest'}, {'label': 'Corner scores', 'value': 'scores'}],
+                         {'label': 'Points of Interest', 'value': 'interest'},
+                         {'label': 'Partial corner scores', 'value': 'scores_partial'}, {'label': 'All corner scores', 'value': 'scores'}],
                 value='slopes'
+            ),
+            dcc.Checklist(
+                id='yn-options',
+                options=[
+                    {'label': 'Add Corners', 'value': 'corners'},
+                    {'label': 'Add Zones', 'value': 'zones'},
+                    {'label': 'Zoom', 'value': 'zoom'},
+                ],
+                value=['corners', 'zoom'],
+                labelStyle={'display': 'inline-block'}
             )
         ],className='section'),
         html.Div([
@@ -318,8 +330,10 @@ def display_profile_options(clickData):
 @app.callback(
     Output('inter', 'src'),
     [Input('source', 'clickData'),
-     Input('inter-select', 'value')])
-def display_ray_image(clickData, inter_select):
+     Input('inter-select', 'value'),
+     Input('yn-options', 'value'),
+     Input('source', 'selectedData')])
+def display_ray_image(clickData, inter_select, yn_options, selectedData):
     image = None
 
     if inter_select in ['slopes', 'interest']:
@@ -331,15 +345,29 @@ def display_ray_image(clickData, inter_select):
             dc.score_all()
 
         image = dc.scored * 255 / np.max(dc.scored)
-        #image = np.repeat(image, 3).reshape(*image.shape, 3)
         image = np.pad(image[:,:,None], ((0,0),(0,0),(2,0)), mode='constant')
-    
+
+    elif inter_select == 'scores_partial':
+        image = np.nan_to_num(dc.scored_partial)
+        image = image * 255 / np.max(image)
+        image = np.pad(image[:,:,None], ((0,0),(0,0),(2,0)), mode='constant')
+        
     if image is None:
         image = get_2dimg(dc)
 
     if clickData:
         update_point(clickData)
         image = paint_donut(image, donut)
+    
+    if 'zones' in yn_options:
+        image = paint_zones(image, dc)
+    
+    if 'corners' in yn_options:
+        image = paint_corners(image, dc)
+    
+    if selectedData is not None and 'zoom' in yn_options:
+        x,y = selectedData['range']['x'], selectedData['range']['y']
+        image = image[int(y[0]):int(y[1]),int(x[0]):int(x[1])]
     
     encoded_image = numpy_to_b64(image, enc_format='png')
     return HTML_IMG_SRC_PARAMETERS + encoded_image

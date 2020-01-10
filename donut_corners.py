@@ -5,17 +5,15 @@ from scipy import signal, optimize
 
 from multiprocessing import Pool, cpu_count
 from math import pi, atan2
+import random
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self, image, **kwargs):
-        if isinstance(image, str):
-            self.src = cv2.imread(image)
-        else:
-            self.src = image
-
+        
+        # passed on params
         self.peaks_params = {'height':30, 'threshold':None, 'distance':None, 'prominence':None, 'width':None, 'wlen':None, 'rel_height':0.5, 'plateau_size':None}
         self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
 
@@ -23,15 +21,28 @@ class DonutCorners():
         self.radii = [15, 20]
         self.round = False
         self.msk0, self.mask_splits = DonutCorners.donut_mask(self.radii, self.round)
-        self.nearest = True
 
         # grid params
-        self.grid_size = 10
+        self.grid_size = 20
 
         self.__dict__.update(kwargs)
+
+        # data init
+        if isinstance(image, str):
+            self.src = cv2.imread(image)
+        else:
+            self.src = image
+        self.dims = np.array(self.src.shape[:2], dtype=int)
+
         self.scored = None
-        self.scored_partial = np.empty(self.src.shape[:2])
+        self.scored_partial = np.empty(self.dims)
         self.scored_partial[:] = np.NaN
+
+        self.zones = np.empty(self.dims, dtype=int)
+        self.zones[:] = -1
+        self.zones_mask = np.concatenate([[[0,0]],DonutCorners.donut_mask(list(range(3)))[0]]) 
+
+        self.corners = []
         
         self.preprocess()
 
@@ -135,9 +146,12 @@ class DonutCorners():
 
     # scoring methods
     def get_score(self, point):
+        if type(point) !=np.ndarray:
+            point = np.array(point)
+
         if not np.all((point >= 0) & (point < self.src.shape[:-1])):
             return 0
-        if self.scored:
+        if self.scored is not None:
             return self.scored[point[0],point[1]]
         
         if np.isnan(self.scored_partial[point[0],point[1]]):
@@ -155,7 +169,7 @@ class DonutCorners():
         return np.mean(strengths[topids]) if len(topids) > 0 else 0
 
 
-    def get_top_rays(self, strengths, angles, n = 8, width = 0.4, double_ended = True):
+    def get_top_rays(self, strengths, angles, n = 3, width = 0.4, double_ended = True):
         if len(strengths) == 0:
             return []
         
@@ -195,67 +209,69 @@ class DonutCorners():
         
         self.scored = out
         return out
-
-    # gradiant ascent methods
-    def donut_slider_blind(self, point):
-        axis = np.array([[0,1],[1,1],[1,0],[1,-1]])
-        ray_len = 2
-        for _ in range(100):
-            print(point)
-            rays = np.array([[self.get_score(point + ax * i) for i in range(-ray_len, ray_len + 1)] for ax in axis])
-            arg = np.unravel_index(np.argmax(rays), shape = rays.shape)
-            
-            lr = arg[1] - ray_len
-
-            if lr == 0:
-               return point
-
-            if abs(lr) == ray_len:
-                point = point + (2 * lr - 1) * axis[arg[0]]
-            else:
-                point = point + lr * axis[arg[0]]
         
         
-    def donut_slider(self, point):
+    def donut_slider(self, point, ray_len = 5, max_iters = 50, min_score = 100):
         axis_def = np.array([[1,1],[1,-1]])
-        ray_len = 3
+        corner_id = len(self.corners)
 
-        for _ in range(100):
-            print(point)
+        for _ in range(max_iters):
+            # print(point, self.get_score(point))
+            # if np.array_equal(point, [10, 90]):
+            #     print('here')
+
+            if self.zones[point[0], point[1]] not in [-1, corner_id]:
+                self.zones[self.zones == corner_id] = self.zones[point[0], point[1]]
+                return self.corners[self.zones[point[0], point[1]]]
+
+            mask = self.clip_mask(self.zones_mask + point.astype(int))
+            self.zones[mask[:,0],mask[:,1]] = corner_id
+
             rays, profiles, strengths, angles, mask, topids = self.bake_donut(point) 
 
-            if len(rays) == 0:
+            if len(topids) == 0:
                 axis = axis_def
             else:
                 #uv, perp, coords = ray
-                axis = np.array([ray[0] for ray in rays])
+                axis = np.array([ray[0] for ray in rays[topids]])
             
-            scores = np.array([[self.get_score((point + ax * i).astype(int)) for i in range(-ray_len, ray_len + 1)] for ax in axis])
+            scores = np.array([[self.get_score(np.round(point + ax * i).astype(int)) for i in range(-ray_len, ray_len + 1)] for ax in axis])
+
+            if np.max(scores) == 0:
+                point = point + ray_len * random.choice((2, -2)) * axis[random.randint(0,axis.shape[0]-1)]
+                point = np.minimum(np.maximum(point,[0,0]),self.dims-1)
+                continue
+
+            cscore = scores[0,ray_len]
+            scores[:,ray_len] = 0
 
             arg = np.unravel_index(np.argmax(scores), shape = scores.shape)
             
+            if cscore > scores[arg]:
+                if cscore > min_score:
+                    self.corners.append(point)
+                    return point
+                
+                self.corners.append([-1,-1])
+                return [-1,-1]
+
+
             lr = arg[1] - ray_len
 
-            if lr == 0:
-                return point
-
             if abs(lr) == ray_len:
-                point = (point + (2 * lr - 1) * axis[arg[0]]).astype(int)
+                point = np.round(point + (2 * lr - 1.5) * axis[arg[0]]).astype(int)
+                point = np.minimum(np.maximum(point,[0,0]),self.dims-1)
             else:
-                point = (point + lr * axis[arg[0]]).astype(int)
+                point = np.round(point + lr * axis[arg[0]]).astype(int)
         
-        # maxfunc = lambda x: -1 * self.score_point(x)
-        # shape = self.src.shape[:2]
-        # bnds = ((0, shape[0]-1),(0, shape[1]-1))
-        # maxres = optimize.minimize(maxfunc, point, bounds=bnds, method='trust-constr', tol=0.001,
-        #                             options={'initial_tr_radius': 20})
-        # #maxres = optimize.minimize(maxfunc, point, bounds=bnds, method=,)
-        # #maxres = optimize.basinhopping(maxfunc, point, niter=10, T=10.0, stepsize=5,
-        # #                        minimizer_kwargs={'method': 'CG'})
-        # print(maxres.message)
-        # print(maxres.x)
-        # print(maxres.fun)
-        # return maxres.x
+        self.corners.append([-1,-1])
+        return [-1,-1]
+    
+
+    def find_corners(self):
+        for point in np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
+                    self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2):
+            self.donut_slider(point)
 
 
 if __name__ == "__main__":
@@ -265,23 +281,24 @@ if __name__ == "__main__":
     #crop
     #img = img[:200, 650:950]
     img = img[25:125, 750:850]
-    pt = [10,10]
 
     dc = DonutCorners(img)
     
-    print(img.shape)
+    dc.find_corners()
 
-    p2 = dc.donut_slider(pt)
-    print(p2)
-    print(dc.get_score(p2))
+    # print(img.shape)
+    # img
+    # p2 = dc.donut_slider(pt)
+    # print(p2)
+    # print(dc.get_score(p2))
 
     #import sys
     #dc.score_all('pydevd' not in sys.modules)
 
     #show_std(dc)
     
-    #print(dc.score_point(pt))
-    #data = list(np.ndindex(dc.src.shape[:2]))
+    #print(dc.score_point(pt))strongest several
+    #data = list(np.ndindex(dc.dims))
     
     #dm = paint_donut(get_2dimg(dc, 'slopes'), dc, pt, rays = True)
     #show_imgs((dm, dc.src))
