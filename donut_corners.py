@@ -30,6 +30,8 @@ class DonutCorners():
 
         self.__dict__.update(kwargs)
         self.scored = None
+        self.scored_partial = np.empty(self.src.shape[:2])
+        self.scored_partial[:] = np.NaN
         
         self.preprocess()
 
@@ -60,7 +62,6 @@ class DonutCorners():
 
 
     def bake_donut(self, point, mask):
-        print(point)
         # identify points of interest
         mask = self.clip_mask(mask + np.array(point, dtype=int))
         pois = self.get_pois(mask)
@@ -169,19 +170,50 @@ class DonutCorners():
         return np.mean(np.abs(profile))
     
 
+    def get_score(self, point):
+        if self.scored:
+            return self.scored[point[0],point[1]]
+        if np.isnan(self.scored_partial[point[0],point[1]]):
+            #print('here')
+            self.scored_partial[point[0],point[1]] = self.score_point(point)
+        
+        #print(self.scored_partial[point[0],point[1]])
+        return self.scored_partial[point[0],point[1]]
+
+
     def donut_slider(self, point):
-        maxfunc = lambda x: -1 * self.score_point(x)
-        shape = self.src.shape[:2]
-        bnds = ((0, shape[0]-1),(0, shape[1]-1))
-        maxres = optimize.minimize(maxfunc, point, bounds=bnds, method='trust-constr', tol=0.001,
-                                    options={'initial_tr_radius': 20})
-        #maxres = optimize.minimize(maxfunc, point, bounds=bnds, method=,)
-        #maxres = optimize.basinhopping(maxfunc, point, niter=10, T=10.0, stepsize=5,
-        #                        minimizer_kwargs={'method': 'CG'})
-        print(maxres.message)
-        print(maxres.x)
-        print(maxres.fun)
-        return maxres.x
+        axis = np.array([[0,1],[1,1],[1,0],[1,-1]])
+        ray_len = 2
+        for _ in range(100):
+            print(point)
+            rays = np.array([[self.get_score(point + ax * i) for i in range(-ray_len, ray_len + 1)] for ax in axis])
+            arg = np.unravel_index(np.argmax(rays), shape = rays.shape)
+            
+            lr = arg[1] - ray_len
+
+            if lr == 0:
+                return point
+
+            if abs(lr) == ray_len:
+                point = point + (2 * lr - 1) * axis[arg[0]]
+            else:
+                point = point + lr * axis[arg[0]]
+        
+        
+        
+        
+        # maxfunc = lambda x: -1 * self.score_point(x)
+        # shape = self.src.shape[:2]
+        # bnds = ((0, shape[0]-1),(0, shape[1]-1))
+        # maxres = optimize.minimize(maxfunc, point, bounds=bnds, method='trust-constr', tol=0.001,
+        #                             options={'initial_tr_radius': 20})
+        # #maxres = optimize.minimize(maxfunc, point, bounds=bnds, method=,)
+        # #maxres = optimize.basinhopping(maxfunc, point, niter=10, T=10.0, stepsize=5,
+        # #                        minimizer_kwargs={'method': 'CG'})
+        # print(maxres.message)
+        # print(maxres.x)
+        # print(maxres.fun)
+        # return maxres.x
 
 
 
@@ -198,6 +230,8 @@ if __name__ == "__main__":
     print(img.shape)
 
     p2 = dc.donut_slider(pt)
+    print(p2)
+    print(dc.get_score(p2))
 
     #import sys
     #dc.score_all('pydevd' not in sys.modules)
