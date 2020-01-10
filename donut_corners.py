@@ -1,15 +1,10 @@
 import cv2
 import numpy as np
-from scipy import signal
+from scipy import signal, optimize
+#from scipy.optimize import basinhopping
 
 from multiprocessing import Pool, cpu_count
 from math import pi, atan2
-
-def get_top_n(lst, n):
-    return np.partition(lst, -n)[-n:] if len(lst) > n else lst
-
-def arg_get_top_n(lst, n):
-    return np.argpartition(lst, -n)[-n:] if len(lst) > n else lst
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -65,8 +60,9 @@ class DonutCorners():
 
 
     def bake_donut(self, point, mask):
+        print(point)
         # identify points of interest
-        mask = self.clip_mask(mask + point)
+        mask = self.clip_mask(mask + np.array(point, dtype=int))
         pois = self.get_pois(mask)
 
         # trace rays from each point
@@ -171,6 +167,22 @@ class DonutCorners():
     @classmethod
     def score_ray(cls, profile):
         return np.mean(np.abs(profile))
+    
+
+    def donut_slider(self, point):
+        maxfunc = lambda x: -1 * self.score_point(x)
+        shape = self.src.shape[:2]
+        bnds = ((0, shape[0]-1),(0, shape[1]-1))
+        maxres = optimize.minimize(maxfunc, point, bounds=bnds, method='trust-constr', tol=0.001,
+                                    options={'initial_tr_radius': 20})
+        #maxres = optimize.minimize(maxfunc, point, bounds=bnds, method=,)
+        #maxres = optimize.basinhopping(maxfunc, point, niter=10, T=10.0, stepsize=5,
+        #                        minimizer_kwargs={'method': 'CG'})
+        print(maxres.message)
+        print(maxres.x)
+        print(maxres.fun)
+        return maxres.x
+
 
 
 if __name__ == "__main__":
@@ -178,23 +190,25 @@ if __name__ == "__main__":
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
-    img = img[25:125, 750:850]
-    pt = [89,8]
+    img = img[:200, 650:950]
+    pt = [50,150]
 
     dc = DonutCorners(img)
     
     print(img.shape)
+
+    p2 = dc.donut_slider(pt)
 
     #import sys
     #dc.score_all('pydevd' not in sys.modules)
 
     #show_std(dc)
     
-    print(dc.score_point(pt))
-    data = list(np.ndindex(dc.src.shape[:2]))
+    #print(dc.score_point(pt))
+    #data = list(np.ndindex(dc.src.shape[:2]))
     
-    dm = paint_donut(get_2dimg(dc, 'slopes'), dc, pt, rays = True)
-    show_imgs((dm, dc.src))
+    #dm = paint_donut(get_2dimg(dc, 'slopes'), dc, pt, rays = True)
+    #show_imgs((dm, dc.src))
 
     #show_imgs((dc.interest[...,0], dc.slopes[...,0]))
     
