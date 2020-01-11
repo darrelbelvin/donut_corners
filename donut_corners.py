@@ -21,7 +21,10 @@ class DonutCorners():
         self.angle_count = 48 # must be multiple of 4
         self.vortex_radius = 30
         self.vortex_diameter = 1 + self.vortex_radius * 2
+        self.vortex_inner_radius = 0
         self.vortex_round = True
+
+        self.eval_method = {'sectional': False}
 
         # grid params
         self.grid_size = 20
@@ -41,6 +44,7 @@ class DonutCorners():
 
         self.zones = np.empty(self.dims, dtype=int)
         self.zones[:] = -1
+        self.zones_mask = np.array(list(np.ndindex(7,7))) - [3,3]
 
         self.corners = []
 
@@ -77,7 +81,7 @@ class DonutCorners():
              mode='constant')
 
     def vortex(self):
-        r, d = self.vortex_radius, self.vortex_diameter
+        r, d, ir = self.vortex_radius, self.vortex_diameter, self.vortex_inner_radius
         #r = d/2
         spiral = np.zeros((self.angle_count,d,d), dtype=bool)
 
@@ -95,9 +99,12 @@ class DonutCorners():
 
         if self.vortex_round:
             lens = np.linalg.norm(delta,axis=-1)
-            mask = lens < d/2
+            mask = (lens < d/2) & (lens > ir - 0.5)
             #lens[radius, radius] = -1
             spiral = spiral & mask
+
+        else:
+            spiral[r-ir, r+ir:r-ir, r+ir] = False
 
         self.spiral = spiral #np.roll(spiral, self.angle_count // 4, axis=1)
 
@@ -124,11 +131,13 @@ class DonutCorners():
     def score_point(self, point):
         scores = self.angled_slopes[:,point[0] : point[0] + self.vortex_diameter, point[1] : point[1] + self.vortex_diameter][self.spiral]
         scores = np.abs(scores)
+
+        if not self.eval_method['sectional']:
+            return np.mean(scores)
+
         score_sections = np.split(scores, self.angle_jumps)
         maxs = np.array([np.max(sect) for sect in score_sections])
         means = np.array([np.mean(sect) for sect in score_sections])
-
-        #return np.mean(scores)
         
         def get_max(vals, w = 1):
             arg = np.argmax(vals)
@@ -158,31 +167,24 @@ class DonutCorners():
         
         self.scored = out
         return out
-        
-        
-    def donut_slider(self, point, ray_len = 5, max_iters = 50, min_score = 100):
-        axis_def = np.array([[1,1],[1,-1]])
+    
+
+    def clip_mask(self, mask):
+        return mask[np.all((mask >= 0) & (mask < self.src.shape[:-1]), axis=1)]
+    
+
+    def donut_slider(self, point, ray_len = 5, max_iters = 50, min_score = 10):
+        axis = np.array([[0,1],[1,1],[1,0],[1,-1]])
         corner_id = len(self.corners)
 
         for _ in range(max_iters):
-            # print(point, self.get_score(point))
-            # if np.array_equal(point, [10, 90]):
-            #     print('here')
-
+            #print(point, self.get_score(point))
             if self.zones[point[0], point[1]] not in [-1, corner_id]:
                 self.zones[self.zones == corner_id] = self.zones[point[0], point[1]]
                 return self.corners[self.zones[point[0], point[1]]]
 
             mask = self.clip_mask(self.zones_mask + point.astype(int))
             self.zones[mask[:,0],mask[:,1]] = corner_id
-
-            rays, profiles, strengths, angles, mask, topids = self.bake_donut(point) 
-
-            if len(topids) == 0:
-                axis = axis_def
-            else:
-                #uv, perp, coords = ray
-                axis = np.array([ray[0] for ray in rays[topids]])
             
             scores = np.array([[self.get_score(np.round(point + ax * i).astype(int)) for i in range(-ray_len, ray_len + 1)] for ax in axis])
 
@@ -238,20 +240,29 @@ if __name__ == "__main__":
     dc = DonutCorners(img)
     print(dc.score_point(np.array([100,100])))
     import sys
+
+
     dc.score_all('pydevd' not in sys.modules)
+    
+    dc.find_corners()
 
     sc = dc.scored - np.min(dc.scored)
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
-    show_img(np.maximum(dc.src[...,[2,1,0]], sc))
+    show_img(paint_zones(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
     show_img(sc)
+    show_img(paint_corners(sc, dc))
+
+
+
     #show_img(dc.src[...,[2,1,0]])
     # dc.find_corners()
 
     # print(img.shape)
     # img
-    # p2 = dc.donut_slider(pt)
+
+    # p2 = dc.donut_slider(np.array([100,150]))
     # print(p2)
     # print(dc.get_score(p2))
 
