@@ -21,7 +21,10 @@ class DonutCorners():
         self.angle_count = 48 # must be multiple of 4
         self.vortex_radius = 30
         self.vortex_diameter = 1 + self.vortex_radius * 2
+        self.vortex_inner_radius = 0
         self.vortex_round = True
+
+        self.eval_method = {'sectional': False}
 
         # grid params
         self.grid_size = 20
@@ -42,6 +45,7 @@ class DonutCorners():
 
         self.zones = np.empty(self.dims, dtype=int)
         self.zones[:] = -1
+        self.zones_mask = np.array(list(np.ndindex(7,7))) - [3,3]
 
         self.corners = []
 
@@ -78,7 +82,7 @@ class DonutCorners():
              mode='constant')
 
     def vortex(self):
-        r, d = self.vortex_radius, self.vortex_diameter
+        r, d, ir = self.vortex_radius, self.vortex_diameter, self.vortex_inner_radius
         #r = d/2
         spiral = np.zeros((self.angle_count,d,d), dtype=bool)
 
@@ -96,9 +100,12 @@ class DonutCorners():
 
         if self.vortex_round:
             lens = np.linalg.norm(delta,axis=-1)
-            mask = lens < d/2
+            mask = (lens < d/2) & (lens > ir - 0.5)
             #lens[radius, radius] = -1
             spiral = spiral & mask
+
+        else:
+            spiral[r-ir, r+ir:r-ir, r+ir] = False
 
         self.spiral = spiral #np.roll(spiral, self.angle_count // 4, axis=1)
 
@@ -124,11 +131,13 @@ class DonutCorners():
     def score_point(self, point):
         scores = self.angled_slopes[:,point[0] : point[0] + self.vortex_diameter, point[1] : point[1] + self.vortex_diameter][self.spiral]
         scores = np.abs(scores)
+
+        if not self.eval_method['sectional']:
+            return np.mean(scores)
+
         score_sections = np.split(scores, self.angle_jumps)
         maxs = np.array([np.max(sect) for sect in score_sections])
         means = np.array([np.mean(sect) for sect in score_sections])
-
-        #return np.mean(scores)
         
         def get_max(vals, w = 1):
             arg = np.argmax(vals)
