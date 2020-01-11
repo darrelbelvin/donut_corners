@@ -17,10 +17,9 @@ class DonutCorners():
         self.peaks_params = {'height':30, 'threshold':None, 'distance':None, 'prominence':None, 'width':None, 'wlen':None, 'rel_height':0.5, 'plateau_size':None}
         self.sobel_params = {'ksize':3, 'scale':1, 'delta':0, 'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
 
-        # donut params
-        self.radii = [15, 20]
-        self.round = False
-        self.msk0, self.mask_splits = DonutCorners.donut_mask(self.radii, self.round)
+        # vortex & lighthouse
+        self.vortex, self.angles, self.ring = DonutCorners.vortex()
+
 
         # grid params
         self.grid_size = 20
@@ -96,30 +95,27 @@ class DonutCorners():
         return rays, profiles, strengths, angles, mask, topids
 
 
-    @classmethod
-    def donut_mask(cls, radii, round=False):
-        if round:
-            raise NotImplementedError
-        
-        mask = []
+    @staticmethod
+    def vortex(radius = 10, ring_width = 1):
+        d = 1+radius * 2
+        r = d/2
+        vtx = np.empty((d,d,2), dtype=np.float16)
 
-        for radius in radii:
-            d = 1+radius * 2
-            ring = np.empty((d*4-4,2),dtype=int)
-            edge = np.arange(d) - radius
-            ring[:d, 0] = radius
-            ring[:d, 1] = edge
-            ring[d-1:2*d-1,0] = -edge
-            ring[d-1:2*d-1,1] = radius
-            ring[2*d-2:3*d-2,0] = -radius
-            ring[2*d-2:3*d-2,1] = -edge
-            ring[3*d-3:4*d-4,0] = edge[:-1]
-            ring[3*d-3:4*d-4,1] = -radius
-            mask.append(ring)
+        delta = np.array(list(np.ndindex(vtx.shape[:2]))).reshape(vtx.shape) - radius
+
+        lens = np.linalg.norm(delta,axis=-1)
+        lens[radius, radius] = -1
+
+        dirs = delta / lens[...,None]
+        dirs[lens > r] = 0
+
+        angles = np.arctan2(delta[...,0], delta[...,1])
         
-        splits = np.cumsum([len(ring) for ring in mask[:-1]])
-        
-        return np.concatenate(mask), splits
+        ring_true = (lens > r - ring_width) & (lens <= r)
+        ring_order = np.argsort(angles[ring_true])
+        ring = delta[ring_true][ring_order]
+
+        return np.rot90(dirs), angles[ring[:,0],ring[:,1]], ring
 
 
     def clip_mask(self, mask):
@@ -277,14 +273,18 @@ class DonutCorners():
 if __name__ == "__main__":
     from visualizing_donut_corners import *
 
-    img = cv2.imread('images/bldg-1.jpg')
-    #crop
-    #img = img[:200, 650:950]
-    img = img[25:125, 750:850]
+    vortex, angles, ring = DonutCorners.vortex(2)
+    print(np.moveaxis(vortex, 2,0))
+    print(angles)
 
-    dc = DonutCorners(img)
+    # img = cv2.imread('images/bldg-1.jpg')
+    # #crop
+    # #img = img[:200, 650:950]
+    # img = img[25:125, 750:850]
+
+    # dc = DonutCorners(img)
     
-    dc.find_corners()
+    # dc.find_corners()
 
     # print(img.shape)
     # img
