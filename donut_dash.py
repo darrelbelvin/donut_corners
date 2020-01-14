@@ -152,7 +152,7 @@ def FigureForInteractiveImageNumpy(image, enc_format='png', dragmode='select', v
     height, width = image.shape[:2]
 
     data = np.array(list(np.ndindex(image.shape[:2])))
-    go_data = go.Scatter(y=data[:,0], x=data[:,1], mode='markers', opacity=0)
+    go_data = go.Scattergl(y=data[:,0], x=data[:,1], mode='markers', opacity=0)
 
     return {
             'data': [go_data],
