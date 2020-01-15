@@ -146,8 +146,7 @@ class DonutCorners():
 
     # scoring methods
     def get_score(self, point):
-        if type(point) !=np.ndarray:
-            point = np.array(point)
+        point = np.array(point, dtype=int)
 
         if not np.all((point >= 0) & (point < self.src.shape[:-1])):
             return 0
@@ -203,7 +202,7 @@ class DonutCorners():
                 out = p.map(self.score_row, range(self.src.shape[0]))
         
         else:
-            out = [self.score_row(y) for y in range(img.shape[0])]
+            out = [self.score_row(y) for y in range(self.src.shape[0])]
         
         out = np.array(out)
         
@@ -269,9 +268,15 @@ class DonutCorners():
     
 
     def find_corners(self):
+        negative = lambda *args: -1 * self.get_score(*args)
+
         for point in np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
                     self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2):
-            self.donut_slider(point)
+            
+            result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
+                            options={'initial_simplex':np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]])})
+            self.corners.append(result['x'].astype(int))
+            
 
 
 if __name__ == "__main__":
@@ -281,16 +286,24 @@ if __name__ == "__main__":
     #crop
     #img = img[:200, 650:950]
     img = img[25:125, 750:850]
-
+    
     dc = DonutCorners(img)
+    
+    print(dc.score_point(np.array([100,100])))
+    import sys
+
+
+    #dc.score_all('pydevd' not in sys.modules)
     
     dc.find_corners()
 
-    # print(img.shape)
-    # img
-    # p2 = dc.donut_slider(pt)
-    # print(p2)
-    # print(dc.get_score(p2))
+    sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
+    sc = sc / np.max(sc) * 255
+    sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
+
+    show_img(paint_zones(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
+    show_img(sc)
+    show_img(paint_corners(sc, dc))
 
     #import sys
     #dc.score_all('pydevd' not in sys.modules)
