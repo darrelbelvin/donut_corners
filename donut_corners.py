@@ -24,7 +24,8 @@ class DonutCorners():
 
         # grid params
         self.grid_size = 20
-
+        self.min_corner_score = 10
+        
         self.__dict__.update(kwargs)
 
         # data init
@@ -208,66 +209,31 @@ class DonutCorners():
         
         self.scored = out
         return out
-        
-        
-    def donut_slider(self, point, ray_len = 5, max_iters = 50, min_score = 100):
-        axis_def = np.array([[1,1],[1,-1]])
-        corner_id = len(self.corners)
-
-        for _ in range(max_iters):
-            # print(point, self.get_score(point))
-            # if np.array_equal(point, [10, 90]):
-            #     print('here')
-
-            if self.zones[point[0], point[1]] not in [-1, corner_id]:
-                self.zones[self.zones == corner_id] = self.zones[point[0], point[1]]
-                return self.corners[self.zones[point[0], point[1]]]
-
-            mask = self.clip_mask(self.zones_mask + point.astype(int))
-            self.zones[mask[:,0],mask[:,1]] = corner_id
-
-            rays, profiles, strengths, angles, mask, topids = self.bake_donut(point) 
-
-            if len(topids) == 0:
-                axis = axis_def
-            else:
-                #uv, perp, coords = ray
-                axis = np.array([ray[0] for ray in rays[topids]])
-            
-            scores = np.array([[self.get_score(np.round(point + ax * i).astype(int)) for i in range(-ray_len, ray_len + 1)] for ax in axis])
-
-            if np.max(scores) == 0:
-                point = point + ray_len * random.choice((2, -2)) * axis[random.randint(0,axis.shape[0]-1)]
-                point = np.minimum(np.maximum(point,[0,0]),self.dims-1)
-                continue
-
-            cscore = scores[0,ray_len]
-            scores[:,ray_len] = 0
-
-            arg = np.unravel_index(np.argmax(scores), shape = scores.shape)
-            
-            if cscore > scores[arg]:
-                if cscore > min_score:
-                    self.corners.append(point)
-                    return point
-                
-                self.corners.append([-1,-1])
-                return [-1,-1]
-
-
-            lr = arg[1] - ray_len
-
-            if abs(lr) == ray_len:
-                point = np.round(point + (2 * lr - 1.5) * axis[arg[0]]).astype(int)
-                point = np.minimum(np.maximum(point,[0,0]),self.dims-1)
-            else:
-                point = np.round(point + lr * axis[arg[0]]).astype(int)
-        
-        self.corners.append([-1,-1])
-        return [-1,-1]
     
 
-    def find_corners(self):
+    def find_corner(self, point):
+        negative = lambda *args: -1 * self.get_score(*args)
+        result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
+                        options={'initial_simplex':np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]])})
+        if abs(result['fun']) >= self.min_corner_score:
+            self.corners.append(result['x'].astype(int))
+
+
+    def find_corners(self, multithread = True):
+        grid = np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
+                self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2)
+
+        if multithread:
+            with Pool(cpu_count() - 1) as p:
+                out = p.map(self.find_corner, grid)
+        
+        else:
+            for point in grid:
+                self.find_corner(point)
+        
+        return
+
+
         negative = lambda *args: -1 * self.get_score(*args)
 
         for point in np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
@@ -284,8 +250,8 @@ if __name__ == "__main__":
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
-    #img = img[:200, 650:950]
-    img = img[25:125, 750:850]
+    img = img[:200, 650:950]
+    #img = img[25:125, 750:850]
     
     dc = DonutCorners(img)
     
@@ -294,8 +260,8 @@ if __name__ == "__main__":
 
 
     #dc.score_all('pydevd' not in sys.modules)
-    
-    dc.find_corners()
+    dc.find_corner(np.array([30,30]))
+    dc.find_corners('pydevd' not in sys.modules)
 
     sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
     sc = sc / np.max(sc) * 255
