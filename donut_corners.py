@@ -238,6 +238,10 @@ if __name__ == "__main__":
     # print(np.moveaxis(vortex, 2,0))
     # print(angles)
 
+    # vortex, angles, ring = DonutCorners.vortex(2)
+    # print(np.moveaxis(vortex, 2,0))
+    # print(angles)
+
     img = cv2.imread('images/bldg-1.jpg')
     #crop
     img = img[:200, 650:950]
