@@ -11,8 +11,6 @@ sys.path.append('../')
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
-
-class DonutCorners():
     
     # pylint: disable=too-many-instance-attributes
     def __init__(self, image, **kwargs):
@@ -28,6 +26,7 @@ class DonutCorners():
         self.vortex_radius = 30
         self.vortex_inner_radius = 0
         self.vortex_round = True
+        self.beam_width = 2
 
         self.eval_method = {'sectional': False, 'elimination_width': self.beam_count // 30, 'max_n': 3, 'elim_double_ends': False}
 
@@ -82,7 +81,7 @@ class DonutCorners():
         img_dirs = np.arctan2(self.slopes[...,0], self.slopes[...,1])
         angle_deltas = np.abs((img_dirs[None,...] - self.baked_angles[:,None,None])%pi - (pi/2))
 
-        n = 10
+        n = 30
         sharpening_factor = n**(1*angle_deltas)
 
         angled_slopes = np.array([self.slopes.dot(uv) for uv in uvs])
@@ -113,9 +112,10 @@ class DonutCorners():
         
         spiral = (np.abs(dist_to_line) < self.beam_width / 2) & (len_on_line > ir) & (len_on_line < d/2)
 
-        spiral = np.roll(spiral, - int(mult/2), axis=0)
+        #spiral = np.roll(spiral, - int(mult/2), axis=0)
+        spiral = np.roll(spiral, self.angle_count // 4, axis=0)
 
-        self.spiral = spiral #np.roll(spiral, self.angle_count // 4, axis=1)
+        self.spiral = spiral #np.roll(spiral, 3*self.angle_count // 4, axis=1)
 
         self.beam_index = np.argwhere(spiral)[...,0]
         self.beam_jumps = np.argwhere(self.beam_index[1:] != self.beam_index[:-1]).flatten() + 1
@@ -142,10 +142,7 @@ class DonutCorners():
                                     point[1] : point[1] + self.vortex_diameter
                                     ][self.spiral]
 
-        return np.mean(np.abs(scores))
-
-        
-        scores = self.angled_slopes[:,point[0] : point[0] + self.vortex_diameter, point[1] : point[1] + self.vortex_diameter][self.spiral]
+        #return np.mean(np.abs(scores))
 
         if not self.eval_method['sectional']:
             return np.mean(np.abs(scores))
@@ -199,34 +196,40 @@ class DonutCorners():
         negative = lambda *args: -1 * self.get_score(*args)
         result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
                         options={'initial_simplex':np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]])})
-        if abs(result['fun']) >= self.min_corner_score:
-            self.corners.append(result['x'].astype(int))
+
+        best = result['x'].astype(int)
+        best_val = abs(result['fun'])
+        
+        best2 = np.array([-1,-1])
+        brute_radius = 2
+
+        while not np.all(best2 == best):
+            best2 = best
+            brute_grid = np.swapaxes(np.mgrid[best[0] - brute_radius:best[0] + brute_radius + 1,
+                                            best[1] - brute_radius:best[1] + brute_radius + 1], 0,2).reshape(-1,2)
+
+            for p in brute_grid:
+                if self.get_score(p) > best_val:
+                    best_val = self.get_score(p)
+                    best2 = p
+
+        if best_val >= self.min_corner_score:
+            self.corners.append(best)
+        
+        return best
 
 
-    def find_corners(self, multithread = True):
+    def find_corners(self, multithread = False):
         grid = np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
                 self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2)
 
         if multithread:
             with Pool(cpu_count() - 1) as p:
-                out = p.map(self.find_corner, grid)
+                self.corners = p.map(self.find_corner, grid)
         
         else:
             for point in grid:
-                self.find_corner(point)
-        
-        return
-
-
-        negative = lambda *args: -1 * self.get_score(*args)
-
-        for point in np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
-                    self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2):
-            
-            result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
-                            options={'initial_simplex':np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]])})
-            self.corners.append(result['x'].astype(int))
-            
+                self.find_corner(point)    
 
 
 if __name__ == "__main__":
@@ -242,24 +245,27 @@ if __name__ == "__main__":
 
     kwargs = {'angle_count': 12 * 7, # must be multiple of 4
             'beam_count': 12 * 7,
-            'beam_width': 3,
-            'vortex_radius': 40,
-            'vortex_inner_radius': 10,
+            'beam_width': 2,
+            'vortex_radius': 30,
+            'vortex_inner_radius': 5,
             'vortex_round': True,
-            'eval_method': {'sectional': True, 'elimination_width': 2, 'max_n': 3, 'elim_double_ends': True}
+            'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 3, 'elim_double_ends': True}
             }
 
     dc = DonutCorners(img, **kwargs)
+
+    #show_vortex(dc)
 
     print(dc.score_point(np.array([100,100])))
     import sys
 
 
-    #dc.score_all('pydevd' not in sys.modules)
-    dc.find_corner(np.array([30,30]))
-    dc.find_corners('pydevd' not in sys.modules)
+    dc.score_all('pydevd' not in sys.modules)
+    #dc.find_corner(np.array([30,30]))
+    dc.find_corners()#'pydevd' not in sys.modules)
 
-    sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
+    #sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
+    sc = dc.scored
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 

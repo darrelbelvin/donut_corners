@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.express as px
 from donut_corners import DonutCorners
 
 def show_img(img):
@@ -84,3 +85,9 @@ def paint_corners(img, dc: DonutCorners):
         add_img[point[0], point[1], :] = 255
     
     return np.max(np.array([img, add_img]), axis=0)
+
+
+def show_vortex(dc: DonutCorners):
+    points = np.array(list(np.ndindex(dc.spiral.shape)))[dc.spiral.flatten()]
+    fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=points[:,0], opacity=0.5)
+    fig.show()
