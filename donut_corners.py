@@ -6,8 +6,14 @@ from multiprocessing import Pool, cpu_count
 from math import pi
 import random
 
-class DonutCorners():
+import sys
+sys.path.append('../')
 
+class DonutCorners():
+    rot90 = np.array([[0, -1], [1, 0]])
+
+class DonutCorners():
+    
     # pylint: disable=too-many-instance-attributes
     def __init__(self, image, **kwargs):
 
@@ -16,11 +22,14 @@ class DonutCorners():
                              'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
 
         # vortex & lighthouse
-        self.angle_count = 48 # must be multiple of 4
+        self.angle_count = 12 # must be multiple of 4
+        self.beam_count = self.angle_count * 3
+        self.beam_width = 2
         self.vortex_radius = 30
-        self.vortex_diameter = 1 + self.vortex_radius * 2
         self.vortex_inner_radius = 0
         self.vortex_round = True
+
+        self.eval_method = {'sectional': False, 'elimination_width': self.beam_count // 30, 'max_n': 3, 'elim_double_ends': False}
 
         # grid params
         self.grid_size = 20
@@ -34,6 +43,8 @@ class DonutCorners():
         else:
             self.src = image
         self.dims = np.array(self.src.shape[:2], dtype=int)
+
+        self.vortex_diameter = 1 + self.vortex_radius * 2
 
         self.scored = None
         self.scored_partial = np.empty(self.dims)
@@ -85,35 +96,29 @@ class DonutCorners():
 
     def vortex(self):
         r, d, ir = self.vortex_radius, self.vortex_diameter, self.vortex_inner_radius
+        mult = self.beam_count / self.angle_count
         #r = d/2
-        spiral = np.zeros((self.angle_count,d,d), dtype=bool)
+        #spiral = np.zeros((self.beam_count,d,d), dtype=bool)
 
-        ind = np.array(list(np.ndindex(spiral.shape[1:]))).reshape((d,d,2))
+        ind = np.array(list(np.ndindex((d,d)))).reshape((d,d,2))
         delta = ind - r
 
-        # dirs = delta / lens[...,None]sin
-        # dirs[lens > r] = 0
-
-        angles = np.arctan2(-delta[...,1], delta[...,0]) % (2*pi)
-        angles[angles > self.baked_angles[-1] + self.baked_angles[1]/2] -= (2*pi)
+        beam_angles = np.linspace(0,2*pi, self.beam_count, endpoint=False)
         
-        angle_args = np.concatenate((np.searchsorted(self.baked_angles, angles - self.baked_angles[1]/2)[...,None], ind), axis=-1)
-        spiral[angle_args[...,0], angle_args[...,1], angle_args[...,2]] = True
+        beam_uvs = np.stack((np.sin(beam_angles), np.cos(beam_angles)), axis=-1)
+        beam_perps = np.matmul(beam_uvs, DonutCorners.rot90)
 
-        lens = np.linalg.norm(delta,axis=-1)
-        if self.vortex_round:
-            mask = (lens < d/2) & (lens > ir - 0.5)
-            #lens[radius, radius] = -1
-            spiral = spiral & mask
+        len_on_line = np.array([delta.dot(uv) for uv in beam_uvs])
+        dist_to_line = np.array([delta.dot(perp) for perp in beam_perps])
+        
+        spiral = (np.abs(dist_to_line) < self.beam_width / 2) & (len_on_line > ir) & (len_on_line < d/2)
 
-        else:
-            spiral[r-ir, r+ir:r-ir, r+ir] = False
+        spiral = np.roll(spiral, - int(mult/2), axis=0)
 
         self.spiral = spiral #np.roll(spiral, self.angle_count // 4, axis=1)
-        self.angle_index = np.argwhere(spiral)[...,0]
-        ai_xy = np.unravel_index(self.angle_index, spiral.shape)
-        self.lens = lens[ai_xy[1], ai_xy[2]]
-        self.angle_jumps = np.argwhere(self.angle_index[1:] != self.angle_index[:-1]).flatten() + 1
+
+        self.beam_index = np.argwhere(spiral)[...,0]
+        self.beam_jumps = np.argwhere(self.beam_index[1:] != self.beam_index[:-1]).flatten() + 1
 
 
     # scoring methods
@@ -138,6 +143,38 @@ class DonutCorners():
                                     ][self.spiral]
 
         return np.mean(np.abs(scores))
+
+        
+        scores = self.angled_slopes[:,point[0] : point[0] + self.vortex_diameter, point[1] : point[1] + self.vortex_diameter][self.spiral]
+
+        if not self.eval_method['sectional']:
+            return np.mean(np.abs(scores))
+
+        score_sections = np.split(scores, self.beam_jumps)
+        means = np.array([np.abs(np.mean(sect)) for sect in score_sections])
+
+        return(np.mean([DonutCorners.get_max(means, w=self.eval_method['elimination_width'],
+                no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])]))
+    
+
+    @staticmethod
+    def get_max(vals, w = 1, no_doubles = True, gradual = True):
+        arg = np.argmax(vals)
+        ret = vals[arg]
+        ind = np.arange(arg-w, arg + w + 1) % len(vals)
+        vals[ind] = 0
+
+        if gradual:
+            
+
+            if no_doubles:
+                pass
+
+        elif no_doubles:
+            vals[(ind + len(vals)//2) % len(vals)] = 0 #eliminate double counting of edges
+        
+        return ret
+        
 
     def score_row(self, y):
         return [self.score_point([y,x]) for x in range(self.src.shape[1])]
@@ -194,19 +231,25 @@ class DonutCorners():
 
 if __name__ == "__main__":
     from visualizing_donut_corners import *
+    # vortex, angles, ring = DonutCorners.vortex(2)
+    # print(np.moveaxis(vortex, 2,0))
+    # print(angles)
 
     img = cv2.imread('images/bldg-1.jpg')
     #crop
     img = img[:200, 650:950]
     #img = img[125:130, 800:805]
 
-    kwargs = {'vortex_inner_radius': 0}
+    kwargs = {'angle_count': 12 * 7, # must be multiple of 4
+            'beam_count': 12 * 7,
+            'beam_width': 3,
+            'vortex_radius': 40,
+            'vortex_inner_radius': 10,
+            'vortex_round': True,
+            'eval_method': {'sectional': True, 'elimination_width': 2, 'max_n': 3, 'elim_double_ends': True}
+            }
 
     dc = DonutCorners(img, **kwargs)
-
-
-    pt2 = [60,125]
-    print(dc.score_point(np.array(pt2)))
 
     print(dc.score_point(np.array([100,100])))
     import sys
