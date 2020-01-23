@@ -87,7 +87,7 @@ def paint_corners(img, dc: DonutCorners):
     return np.max(np.array([img, add_img]), axis=0)
 
 
-def show_vortex(dc: DonutCorners):
+def show_beam(dc: DonutCorners):
     points = np.array(list(np.ndindex(dc.spiral.shape)))[dc.spiral.flatten()]
     fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=points[:,0], opacity=0.5)
     fig.show()
