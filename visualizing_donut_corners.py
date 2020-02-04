@@ -3,9 +3,9 @@ import numpy as np
 import plotly.express as px
 from donut_corners import DonutCorners
 
-def show_img(img):
+def show_img(img, cmap=None):
     plt.figure()
-    plt.imshow(img)
+    plt.imshow(img, cmap=cmap)
     mng = plt.get_current_fig_manager()
     mng.window.showMaximized()
     plt.show()
@@ -82,8 +82,18 @@ def paint_corners(img, dc: DonutCorners):
     add_img = np.zeros_like(img)
 
     for point in dc.corners:
-        add_img[point[0], point[1], :] = 255
+        add_img[point[1][0], point[1][1], :] = point[0]
+
+        if dc.eval_method['sectional']:
+            score, angles, beam_strengths, beam_ids = dc.score_point(point[1])
+            for angle, strength in zip(angles, beam_strengths):
+                #paint rays
+                pass
     
+    add_img = (add_img / np.max(add_img) * 255).astype(int)
+    
+    img[add_img != 0] = add_img[add_img != 0]
+    return img
     return np.max(np.array([img, add_img]), axis=0)
 
 

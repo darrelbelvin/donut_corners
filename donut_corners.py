@@ -1,20 +1,21 @@
 import cv2
 import numpy as np
 from scipy import optimize
+from scipy.optimize._minimize import _minimize_neldermead
 
 from multiprocessing import Pool, cpu_count
 from math import pi
 import random
 
 import sys
-sys.path.append('../')
+sys.path.append('..')
+
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
     
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, image, **kwargs):
-
+    def __init__(self, **kwargs):
         # passed on params
         self.sobel_params = {'ksize':3, 'scale':1, 'delta':0,
                              'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
@@ -36,30 +37,27 @@ class DonutCorners():
         
         self.__dict__.update(kwargs)
 
-        # data init
-        if isinstance(image, str):
-            self.src = cv2.imread(image)
-        else:
-            self.src = image
-        self.dims = np.array(self.src.shape[:2], dtype=int)
-
         self.beam_diameter = 1 + self.beam_length * 2
 
         self.scored = None
-        self.scored_partial = np.empty(self.dims)
-        self.scored_partial[:] = np.NaN
-
-        self.zones = np.empty(self.dims, dtype=int)
-        self.zones[:] = -1
-        self.zones_mask = np.array(list(np.ndindex(7,7))) - [3,3]
+        self.scored_partial = None
 
         self.corners = []
 
         self.baked_angles = np.linspace(0, 2*pi, self.angle_count, endpoint=False)
         self.beam()
 
-        self.preprocess()
+    def fit(self, image):
+        if isinstance(image, str):
+            self.src = cv2.imread(image)
+        else:
+            self.src = image
+        
+        self.dims = np.array(self.src.shape[:2], dtype=int)
+        self.scored_partial = np.empty(self.dims)
+        self.scored_partial[:] = np.NaN
 
+        self.preprocess()
 
     def preprocess(self):
         edges_x = cv2.Sobel(self.src, dx=1, dy=0, **self.sobel_params)
@@ -131,7 +129,7 @@ class DonutCorners():
             return self.scored[point[0],point[1]]
         
         if np.isnan(self.scored_partial[point[0],point[1]]):
-            self.scored_partial[point[0],point[1]] = self.score_point(point)
+            self.scored_partial[point[0],point[1]] = self.score_point(point)[0]
         
         return self.scored_partial[point[0],point[1]]
 
@@ -142,39 +140,44 @@ class DonutCorners():
                                     point[1] : point[1] + self.beam_diameter
                                     ][self.spiral]
 
-        #return np.mean(np.abs(scores))
-
         if not self.eval_method['sectional']:
-            return np.mean(np.abs(scores))
+            return (np.mean(np.abs(scores)),)
 
         score_sections = np.split(scores, self.beam_jumps)
         means = np.array([np.abs(np.mean(sect)) for sect in score_sections])
+
+        maxs = np.array([DonutCorners.get_max_idx(means, w=self.eval_method['elimination_width'],
+                no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])])
+
+        beam_strengths = maxs[:,1]
+        beam_ids = maxs[:,0].astype(int)
+        angles = self.baked_angles[beam_ids]
+
+        return np.mean(beam_strengths), angles, beam_strengths, beam_ids
 
         return(np.mean([DonutCorners.get_max(means, w=self.eval_method['elimination_width'],
                 no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])]))
     
 
     @staticmethod
-    def get_max(vals, w = 1, no_doubles = True, gradual = True):
+    def get_max_idx(vals, w = 1, no_doubles = True, gradual = False):
         arg = np.argmax(vals)
-        ret = vals[arg]
+        val = vals[arg]
         ind = np.arange(arg-w, arg + w + 1) % len(vals)
         vals[ind] = 0
 
         if gradual:
-            
-
             if no_doubles:
                 pass
 
         elif no_doubles:
             vals[(ind + len(vals)//2) % len(vals)] = 0 #eliminate double counting of edges
         
-        return ret
+        return [arg, val]
         
 
     def score_row(self, y):
-        return [self.score_point([y,x]) for x in range(self.src.shape[1])]
+        return [self.score_point([y,x])[0] for x in range(self.src.shape[1])]
 
 
     def score_all(self, multithread = True):
@@ -193,18 +196,32 @@ class DonutCorners():
     
 
     def find_corner(self, point):
+
+        def callback(*args, **kwargs):
+            print('Callback')
+            print(args)
+            print(kwargs)
+
         negative = lambda *args: -1 * self.get_score(*args)
-        result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
-                        options={'initial_simplex':np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]])})
+        # result = optimize.minimize(negative, np.array(point, dtype=int), method='Nelder-Mead', tol=0.1,
+        #                 options=dict(
+        #                     initial_simplex=np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]]),
+        #                     callback=callback)
+        #                 )
 
-        best = result['x'].astype(int)
-        best_val = abs(result['fun'])
+        result = _minimize_neldermead(negative, np.array(point, dtype=int), xatol=1.5, fatol=10, callback=None, return_all=True,
+                            initial_simplex=np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]]))
+
+        #print(result)
+
+        best2 = result['x'].astype(int)
+        best_val = self.get_score(best2) #abs(result['fun'])
         
-        best2 = np.array([-1,-1])
-        brute_radius = 2
+        best = np.array([-1,-1])
+        brute_radius = 3
 
-        while not np.all(best2 == best):
-            best2 = best
+        while not np.all(best == best2):
+            best = best2
             brute_grid = np.swapaxes(np.mgrid[best[0] - brute_radius:best[0] + brute_radius + 1,
                                             best[1] - brute_radius:best[1] + brute_radius + 1], 0,2).reshape(-1,2)
 
@@ -214,7 +231,7 @@ class DonutCorners():
                     best2 = p
 
         if best_val >= self.min_corner_score:
-            self.corners.append(best)
+            self.corners.append([best_val, best])
         
         return best
 
@@ -226,10 +243,10 @@ class DonutCorners():
         if multithread:
             with Pool(cpu_count() - 1) as p:
                 self.corners = p.map(self.find_corner, grid)
-        
+
         else:
             for point in grid:
-                self.find_corner(point)    
+                self.find_corner(point)
 
 
 if __name__ == "__main__":
@@ -242,34 +259,40 @@ if __name__ == "__main__":
     # print(np.moveaxis(beam, 2,0))
     # print(angles)
 
-    img = cv2.imread('images/bldg-1.jpg')
+    img = cv2.imread('images/bldg-3.jpg')
+    #img = cv2.imread('images/tex-1.JPG')
     #crop
     img = img[:200, 650:950]
-    #img = img[125:130, 800:805]
+    #img = img[500:1500:5, 500:1500:5]
 
     kwargs = {'angle_count': 12 * 7, # must be multiple of 4
             'beam_count': 12 * 7,
-            'beam_width': 2,
-            'beam_length': 30,
-            'beam_start': 5,
+            'beam_width': 3,
+            'beam_length': 50,
+            'beam_start': 15,
             'beam_round': True,
-            'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 3, 'elim_double_ends': True}
+            'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
             }
 
-    dc = DonutCorners(img, **kwargs)
+    dc = DonutCorners(**kwargs)
+    dc.fit(img)
 
-    show_beam(dc)
+    #show_beam(dc)
     
-    print(dc.score_point(np.array([100,100])))
+    #print(dc.score_point(np.array([50,50])))
     import sys
 
 
-    dc.score_all('pydevd' not in sys.modules)
-    #dc.find_corner(np.array([30,30]))
-    dc.find_corners()#'pydevd' not in sys.modules)
+    # if 'pydevd' not in sys.modules:
+    #     dc.score_all('pydevd' not in sys.modules)
+    
+    dc.find_corner(np.array([50,70]))
+    #dc.find_corners()#'pydevd' not in sys.modules)
 
-    #sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
-    sc = dc.scored
+    if dc.scored is not None:
+        sc = dc.scored
+    else:
+        sc = np.nan_to_num(dc.scored_partial, nan=-0.5*np.max(np.nan_to_num(dc.scored_partial)))
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
