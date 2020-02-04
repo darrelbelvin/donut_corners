@@ -98,6 +98,12 @@ def paint_corners(img, dc: DonutCorners):
 
 
 def show_beam(dc: DonutCorners):
-    points = np.array(list(np.ndindex(dc.spiral.shape)))[dc.spiral.flatten()]
-    fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=points[:,0], opacity=0.5)
+    show_3d_kernel(dc.spiral)
+    # points = np.array(list(np.ndindex(dc.spiral.shape)))[dc.spiral.flatten() != 0]
+    # fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=dc.spiral[points[:,0], points[:,1], points[:,2]], opacity=0.5)
+    # fig.show()
+
+def show_3d_kernel(arr):
+    points = np.array(list(np.ndindex(arr.shape)))[arr.flatten() != 0]
+    fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=arr[points[:,0], points[:,1], points[:,2]], opacity=0.5)
     fig.show()

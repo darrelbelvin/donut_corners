@@ -68,11 +68,12 @@ def test_building(bldg_no = 1, crop = (slice(0,200), slice(650,950)), score_all 
     show_img(paint_corners(sc, dc))
 
 def beam_demo():
-    kwargs = {'angle_count': 12 * 7, # must be multiple of 4
-            'beam_count': 12 * 7,
-            'beam_width': 3,
-            'beam_length': 50,
-            'beam_start': 15,
+    kwargs = {'angle_count': 8, # must be multiple of 4
+            'beam_count': 8,
+            'beam_width': 4,
+            'fork_spread': 6,
+            'beam_length': 30,
+            'beam_start': 10,
             'beam_round': True,
             'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
             }
@@ -100,7 +101,7 @@ def sobel_demo(bldg_no = 1, beams_show = tuple(range(12)), crop = (slice(0,200),
 
 if __name__ == "__main__":
     #test_rigidized()
-    test_building(1, score_all=False)
+    test_building(1, score_all=True)
     #test_building(1, None, score_all=False)
     #test_building(2, (slice(1000,1300), slice(1000,1300)), False)
     #beam_demo()

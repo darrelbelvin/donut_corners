@@ -24,6 +24,7 @@ class DonutCorners():
         self.angle_count = 12 # must be multiple of 4
         self.beam_count = self.angle_count * 3
         self.beam_width = 2
+        self.fork_spread = 4
         self.beam_length = 30
         self.beam_start = 0
         self.beam_round = True
@@ -33,7 +34,7 @@ class DonutCorners():
 
         # grid params
         self.grid_size = 20
-        self.min_corner_score = 10
+        self.min_corner_score = 0.1
         
         self.__dict__.update(kwargs)
 
@@ -60,6 +61,13 @@ class DonutCorners():
         self.preprocess()
 
     def preprocess(self):
+        self.bw = np.mean(self.src, axis=-1)
+        self.bw = np.pad(self.bw, (
+            (self.beam_length,self.beam_length),(self.beam_length,self.beam_length)),
+             mode='constant', constant_values=0).astype('float32')
+
+        return
+
         edges_x = cv2.Sobel(self.src, dx=1, dy=0, **self.sobel_params)
         edges_y = cv2.Sobel(self.src, dx=0, dy=1, **self.sobel_params)
 
@@ -93,14 +101,12 @@ class DonutCorners():
 
     def beam(self):
         r, d, ir = self.beam_length, self.beam_diameter, self.beam_start
-        mult = self.beam_count / self.angle_count
-        #r = d/2
-        #spiral = np.zeros((self.beam_count,d,d), dtype=bool)
+        w, spr, count = self.beam_width, self.fork_spread, self.beam_count
 
         ind = np.array(list(np.ndindex((d,d)))).reshape((d,d,2))
         delta = ind - r
 
-        beam_angles = np.linspace(0,2*pi, self.beam_count, endpoint=False)
+        beam_angles = np.linspace(0,2*pi, count, endpoint=False)
         
         beam_uvs = np.stack((np.sin(beam_angles), np.cos(beam_angles)), axis=-1)
         beam_perps = np.matmul(beam_uvs, DonutCorners.rot90)
@@ -108,14 +114,26 @@ class DonutCorners():
         len_on_line = np.array([delta.dot(uv) for uv in beam_uvs])
         dist_to_line = np.array([delta.dot(perp) for perp in beam_perps])
         
-        spiral = (np.abs(dist_to_line) < self.beam_width / 2) & (len_on_line > ir) & (len_on_line < d/2)
+        # make the prongs
+        prong1 = np.maximum(w / 2 - np.abs(dist_to_line - spr / 2), 0)
+        prong2 = np.minimum(-w / 2 + np.abs(dist_to_line + spr / 2), 0)
 
-        #spiral = np.roll(spiral, - int(mult/2), axis=0)
-        spiral = np.roll(spiral, self.angle_count // 4, axis=0)
+        # clip to length
+        prong1[(len_on_line < ir) | (len_on_line > r)] = 0
+        prong2[(len_on_line < ir) | (len_on_line > r)] = 0
 
-        self.spiral = spiral #np.roll(spiral, 3*self.angle_count // 4, axis=1)
+        # normalize
+        prong1 = prong1 / np.mean(prong1[prong1 != 0])
+        prong2 = prong2 / np.mean(prong2[prong2 != 0])
 
-        self.beam_index = np.argwhere(spiral)[...,0]
+        # combine
+        spiral = prong1 - prong2
+
+        # store
+        self.spiral = spiral.astype('float32')
+        self.spiral_mask = spiral != 0
+        self.weights = [self.spiral[i,...][self.spiral_mask[i,...]] for i in range(count)]
+        self.beam_index = np.argwhere(self.spiral_mask)[...,0]
         self.beam_jumps = np.argwhere(self.beam_index[1:] != self.beam_index[:-1]).flatten() + 1
 
 
@@ -135,16 +153,25 @@ class DonutCorners():
 
 
     def score_point(self, point):
-        scores = self.angled_slopes[:,
-                                    point[0] : point[0] + self.beam_diameter,
-                                    point[1] : point[1] + self.beam_diameter
-                                    ][self.spiral]
+        region = self.bw[point[0] : point[0] + self.beam_diameter,
+                         point[1] : point[1] + self.beam_diameter]
+        
+        interest = [region[beam] for beam in self.spiral_mask]
+        means = [np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)]
+
+        # scores = self.weights * region
+        # means = np.abs(np.mean(scores, axis=(1,2)))
+
+        # scores = self.angled_slopes[:,
+        #                             point[0] : point[0] + self.beam_diameter,
+        #                             point[1] : point[1] + self.beam_diameter
+        #                             ][self.spiral]
 
         if not self.eval_method['sectional']:
-            return (np.mean(np.abs(scores)),)
+            return (np.mean(means),)
 
-        score_sections = np.split(scores, self.beam_jumps)
-        means = np.array([np.abs(np.mean(sect)) for sect in score_sections])
+        #score_sections = np.split(scores, self.beam_jumps)
+        #means = np.array([np.abs(np.mean(sect)) for sect in score_sections])
 
         maxs = np.array([DonutCorners.get_max_idx(means, w=self.eval_method['elimination_width'],
                 no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])])
@@ -154,9 +181,6 @@ class DonutCorners():
         angles = self.baked_angles[beam_ids]
 
         return np.mean(beam_strengths), angles, beam_strengths, beam_ids
-
-        return(np.mean([DonutCorners.get_max(means, w=self.eval_method['elimination_width'],
-                no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])]))
     
 
     @staticmethod
@@ -259,7 +283,7 @@ if __name__ == "__main__":
     # print(np.moveaxis(beam, 2,0))
     # print(angles)
 
-    img = cv2.imread('images/bldg-3.jpg')
+    img = cv2.imread('images/bldg-1.jpg')
     #img = cv2.imread('images/tex-1.JPG')
     #crop
     img = img[:200, 650:950]
@@ -268,23 +292,22 @@ if __name__ == "__main__":
     kwargs = {'angle_count': 12 * 7, # must be multiple of 4
             'beam_count': 12 * 7,
             'beam_width': 3,
-            'beam_length': 50,
-            'beam_start': 15,
+            'fork_spread': 6,
+            'beam_length': 30,
+            'beam_start': 10,
             'beam_round': True,
-            'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
+            'eval_method': {'sectional': False, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
             }
 
     dc = DonutCorners(**kwargs)
     dc.fit(img)
+    print(dc.score_point(np.array([50,50])))
 
     #show_beam(dc)
     
     #print(dc.score_point(np.array([50,50])))
     import sys
-
-
-    # if 'pydevd' not in sys.modules:
-    #     dc.score_all('pydevd' not in sys.modules)
+    dc.score_all('pydevd' not in sys.modules)
     
     dc.find_corner(np.array([50,70]))
     #dc.find_corners()#'pydevd' not in sys.modules)
