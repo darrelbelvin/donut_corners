@@ -17,8 +17,10 @@ class DonutCorners():
     # pylint: disable=too-many-instance-attributes
     def __init__(self, **kwargs):
         # passed on params
-        self.sobel_params = {'ksize':3, 'scale':1, 'delta':0,
-                             'ddepth':cv2.CV_32F, 'borderType':cv2.BORDER_DEFAULT}
+        self.simplex_args = dict(max_iters = 1000, max_step = 4, initial_simplex_size = 3)
+        self.search_args = dict(top_n=10, img_shape=None)
+        self.img_shape = None
+        self.top_n = None
 
         # beam & lighthouse
         self.angle_count = 12 # must be multiple of 4
@@ -43,13 +45,13 @@ class DonutCorners():
         self.scored = None
         self.scored_partial = None
         self.basins = None
-        self.corners = []
+        self.corners = None
 
         self.baked_angles = np.linspace(0, 2*pi, self.angle_count, endpoint=False)
         self.beam()
 
 
-    def fit(self, image):
+    def init(self, image):
         if isinstance(image, str):
             self.src = cv2.imread(image)
         else:
@@ -59,15 +61,52 @@ class DonutCorners():
         self.scored_partial = np.empty(self.dims)
         self.scored_partial[:] = np.NaN
         self.basins = np.zeros(self.dims, dtype=int)
+        self.corners = []
 
         self.preprocess()
 
 
     def preprocess(self):
-        self.bw = np.mean(self.src, axis=-1)
+        if len(self.src.shape) == 3:
+            self.bw = np.mean(self.src, axis=-1)
+        else:
+            self.bw = self.src
         self.bw = np.pad(self.bw, (
             (self.beam_length,self.beam_length),(self.beam_length,self.beam_length)),
              mode='edge').astype('float32')
+    
+
+    def fit(self, X, y):
+        return self
+    
+
+    def transform(self, img_list, img_shape=None):
+        if self.search_args["img_shape"] is None:
+            if img_shape:
+                self.search_args["img_shape"] = img_shape
+            else:
+                raise ValueError("I need an image shape!")
+        
+        w = img_list.shape[1]
+        with_features = np.empty((img_list.shape[0], w + self.search_args["top_n"] * 3))
+        with_features[:, :w] = img_list
+        with_features[:, w:] = np.nan
+
+        for i, img in enumerate(img_list):
+            self.init(img.reshape(self.search_args["img_shape"]))
+            top = np.array(self.find_corners(**self.search_args)).flatten()
+            with_features[i,w:w + len(top)] = top
+            print(f'{i/img_list.shape[0]:.2%}', end='\r')
+
+        means = np.nanmean(with_features, axis=0)
+        inds = np.where(np.isnan(with_features))
+        with_features[inds] = np.take(means, inds[1])
+
+        return with_features
+
+
+    def set_params(self, **kwargs):
+        self.__dict__.update(kwargs)
 
 
     def beam(self):
@@ -189,28 +228,38 @@ class DonutCorners():
             print(kwargs)
 
         negative = lambda *args: -1 * self.get_score(*args)
-        result = simplex_descent_quantized(negative, 1, np.array(point, dtype=int), max_iters = 1000,
-                basin_mapping = True, current_basin_map = self.basins, max_step = 20,
-                bounds = np.stack([np.zeros_like(self.dims), self.dims], axis=1))
+        result = simplex_descent_quantized(negative, 1, np.array(point, dtype=int), 
+                basin_mapping = True, current_basin_map = self.basins,
+                bounds = np.stack([np.zeros_like(self.dims), self.dims], axis=1), **self.simplex_args)
+
+        # res = np.array([-result['y'], result['x'][0], result['x'][1]])
+        # assert not np.any([np.all(self.corners == c) for c in self.corners])
 
         if result['exit_cause'] == "maximum found":
-            self.corners.append([-result['y'], result['x']])
-            return [-result['y'], result['x']]
-        else:
-            return None
+            res = np.array([-result['y'], result['x'][0], result['x'][1]])
+            if not np.any([np.all(res == c) for c in self.corners]):
+                self.corners.append(res)
+                return res
+        
+        return None
 
 
-    def find_corners(self, multithread = False):
-        offset = 5
-        while np.min(self.basins[offset:-offset,offset:-offset]) == 0:
+    def find_corners(self, multithread = False, edge_offset = 5, top_n=10, stop_percent=None, max_rounds=None, **kwargs):
+        i = 0
+        while np.min(self.basins[edge_offset:-edge_offset,edge_offset:-edge_offset]) == 0:
             true_ind = np.argwhere(self.basins == 0)
             chosen = np.random.randint(0, true_ind.shape[0])
             self.find_corner(true_ind[chosen])
-            print(np.mean(self.basins != 0))
+            if stop_percent is not None and np.mean(self.basins != 0) > stop_percent:
+                break
+            if max_rounds is not None and i >= max_rounds:
+                break
+            i += 1
+        
         strengths = [a[0] for a in self.corners]
-        top = np.argsort(strengths)[-10:]
+        top = np.argsort(strengths)[-1:-top_n-1:-1] # make strongest first
         return [self.corners[i] for i in top]
-
+    
 if __name__ == "__main__":
     from visualizing_donut_corners import *
     img = cv2.imread('images/bldg-1.jpg')
@@ -230,7 +279,7 @@ if __name__ == "__main__":
             }
 
     dc = DonutCorners(**kwargs)
-    dc.fit(img)
+    dc.init(img)
     print(dc.score_point(np.array([50,50])))
 
     #show_beam(dc)

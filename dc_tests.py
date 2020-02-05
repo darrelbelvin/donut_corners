@@ -16,7 +16,7 @@ def test_rigidized():
             }
 
     dc = DonutCorners(**kwargs)
-    dc.fit(img)
+    dc.init(img)
     dc.find_corner(np.array([50,70]))
 
     if dc.scored is not None:
@@ -46,7 +46,7 @@ def test_building(bldg_no = 1, crop = (slice(0,200), slice(650,950)), score_all 
             }
 
     dc = DonutCorners(**kwargs)
-    dc.fit(img)
+    dc.init(img)
 
     import sys
     if score_all:
