@@ -9,7 +9,7 @@ import random
 
 import sys
 sys.path.append('..')
-
+from simplex_descent_quantized.simplex_descent_quantized import simplex_descent_quantized
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -23,8 +23,8 @@ class DonutCorners():
         # beam & lighthouse
         self.angle_count = 12 # must be multiple of 4
         self.beam_count = self.angle_count * 3
-        self.beam_width = 2
-        self.fork_spread = 4
+        self.beam_width = 3
+        self.fork_spread = 2
         self.beam_length = 30
         self.beam_start = 0
         self.beam_round = True
@@ -34,7 +34,7 @@ class DonutCorners():
 
         # grid params
         self.grid_size = 20
-        self.min_corner_score = 0.1
+        self.min_corner_score = 0
         
         self.__dict__.update(kwargs)
 
@@ -42,7 +42,7 @@ class DonutCorners():
 
         self.scored = None
         self.scored_partial = None
-
+        self.basins = None
         self.corners = []
 
         self.baked_angles = np.linspace(0, 2*pi, self.angle_count, endpoint=False)
@@ -57,6 +57,7 @@ class DonutCorners():
         self.dims = np.array(self.src.shape[:2], dtype=int)
         self.scored_partial = np.empty(self.dims)
         self.scored_partial[:] = np.NaN
+        self.basins = np.zeros(self.dims, dtype=int)
 
         self.preprocess()
 
@@ -64,40 +65,7 @@ class DonutCorners():
         self.bw = np.mean(self.src, axis=-1)
         self.bw = np.pad(self.bw, (
             (self.beam_length,self.beam_length),(self.beam_length,self.beam_length)),
-             mode='constant', constant_values=0).astype('float32')
-
-        return
-
-        edges_x = cv2.Sobel(self.src, dx=1, dy=0, **self.sobel_params)
-        edges_y = cv2.Sobel(self.src, dx=0, dy=1, **self.sobel_params)
-
-        def absmaxND(a: np.ndarray, axis=None, keepdims=False):
-            amax = a.max(axis, keepdims=keepdims)
-            amin = a.min(axis, keepdims=keepdims)
-            return np.where(-amin > amax, amin, amax)
-
-        edges_x_max = absmaxND(edges_x, axis=-1)
-        edges_y_max = absmaxND(edges_y, axis=-1)
-        
-        self.slopes = np.stack((edges_y_max, edges_x_max), axis=-1)
-
-        uvs = np.stack((np.sin(self.baked_angles),np.cos(self.baked_angles)), axis=-1)
-        #uvs = np.stack((np.cos(self.baked_angles + pi/2),np.sin(self.baked_angles + pi/2)), axis=-1)
-        
-        img_dirs = np.arctan2(self.slopes[...,0], self.slopes[...,1])
-        angle_deltas = np.abs((img_dirs[None,...] - self.baked_angles[:,None,None])%pi - (pi/2))
-
-        n = 30
-        sharpening_factor = n**(1*angle_deltas)
-
-        angled_slopes = np.array([self.slopes.dot(uv) for uv in uvs])
-        angled_slopes = angled_slopes * sharpening_factor
-        # angled_slopes = np.tile(angled_slopes, (2,1,1))
-        # angled_slopes[self.angle_count//2:] *= -1
-        self.angled_slopes = np.pad(angled_slopes, ((0,0),
-            (self.beam_length,self.beam_length),(self.beam_length,self.beam_length)),
-             mode='constant', constant_values=0)
-    
+             mode='edge').astype('float32')
 
     def beam(self):
         r, d, ir = self.beam_length, self.beam_diameter, self.beam_start
@@ -118,13 +86,15 @@ class DonutCorners():
         prong1 = np.maximum(w / 2 - np.abs(dist_to_line - spr / 2), 0)
         prong2 = np.minimum(-w / 2 + np.abs(dist_to_line + spr / 2), 0)
 
-        # clip to length
-        prong1[(len_on_line < ir) | (len_on_line > r)] = 0
-        prong2[(len_on_line < ir) | (len_on_line > r)] = 0
+        # clip to length & side
+        prong1[(len_on_line < ir) | (len_on_line > r) | (dist_to_line <= 0)] = 0
+        prong2[(len_on_line < ir) | (len_on_line > r) | (dist_to_line > 0)] = 0
 
         # normalize
-        prong1 = prong1 / np.mean(prong1[prong1 != 0])
-        prong2 = prong2 / np.mean(prong2[prong2 != 0])
+        c_1, c_2 = np.sum(prong1 != 0, axis=(1,2)), np.abs(np.sum(prong2 != 0, axis=(1,2)))
+        c_big = np.max(np.array((c_1, c_2)), axis=0)
+        prong1 = prong1 / np.sum(prong1, axis=(1,2))[:, None, None] #(np.sum(prong1, axis=(1,2)) / c_2 * c_big)[:, None, None]
+        prong2 = prong2 / np.sum(prong2, axis=(1,2))[:, None, None] #(np.sum(prong2, axis=(1,2)) / c_1 * c_big)[:, None, None]
 
         # combine
         spiral = prong1 - prong2
@@ -157,7 +127,7 @@ class DonutCorners():
                          point[1] : point[1] + self.beam_diameter]
         
         interest = [region[beam] for beam in self.spiral_mask]
-        means = [np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)]
+        means = np.array([np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)])
 
         # scores = self.weights * region
         # means = np.abs(np.mean(scores, axis=(1,2)))
@@ -233,11 +203,21 @@ class DonutCorners():
         #                     callback=callback)
         #                 )
 
-        result = _minimize_neldermead(negative, np.array(point, dtype=int), xatol=1.5, fatol=10, callback=None, return_all=True,
-                            initial_simplex=np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]]))
+        # result = _minimize_neldermead(negative, np.array(point, dtype=int), xatol=1.5, fatol=10, callback=callback, return_all=True,
+        #                     initial_simplex=np.array([point, point - self.grid_size//2, point - [0,self.grid_size//2]]))
 
-        #print(result)
+        result = simplex_descent_quantized(negative, 1, np.array(point, dtype=int), max_iters = 1000,
+                basin_mapping = True, current_basin_map = self.basins, max_step = 20,
+                bounds = np.stack([np.zeros_like(self.dims), self.dims], axis=1))
 
+        #self.basins = result['new_basins']
+
+        if result['exit_cause'] == "maximum found":
+            self.corners.append([-result['y'], result['x']])
+            return [-result['y'], result['x']]
+        else:
+            return None
+        
         best2 = result['x'].astype(int)
         best_val = self.get_score(best2) #abs(result['fun'])
         
@@ -261,16 +241,23 @@ class DonutCorners():
 
 
     def find_corners(self, multithread = False):
-        grid = np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
-                self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2)
+        offset = 5
+        while np.min(self.basins[offset:-offset,offset:-offset]) == 0:
+            true_ind = np.argwhere(self.basins == 0)
+            chosen = np.random.randint(0, true_ind.shape[0])
+            self.find_corner(true_ind[chosen])
+            print(np.mean(self.basins != 0))
 
-        if multithread:
-            with Pool(cpu_count() - 1) as p:
-                self.corners = p.map(self.find_corner, grid)
+        # grid = np.swapaxes(np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
+        #         self.grid_size//2:self.dims[1]:self.grid_size], 0,2).reshape(-1,2)
 
-        else:
-            for point in grid:
-                self.find_corner(point)
+        # if multithread:
+        #     with Pool(cpu_count() - 1) as p:
+        #         self.corners = p.map(self.find_corner, grid)
+
+        # else:
+        #     for point in grid:
+        #         self.find_corner(point)
 
 
 if __name__ == "__main__":
@@ -289,14 +276,14 @@ if __name__ == "__main__":
     img = img[:200, 650:950]
     #img = img[500:1500:5, 500:1500:5]
 
-    kwargs = {'angle_count': 12 * 7, # must be multiple of 4
-            'beam_count': 12 * 7,
-            'beam_width': 3,
-            'fork_spread': 6,
-            'beam_length': 30,
-            'beam_start': 10,
+    kwargs = {'angle_count': 12 * 4, # must be multiple of 4
+            'beam_count': 12 * 4,
+            'beam_width': 4,
+            'fork_spread': 0,
+            'beam_length': 20,
+            'beam_start': 5,
             'beam_round': True,
-            'eval_method': {'sectional': False, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
+            'eval_method': {'sectional': False, 'elimination_width': 6, 'max_n': 3, 'elim_double_ends': True}
             }
 
     dc = DonutCorners(**kwargs)
@@ -307,10 +294,11 @@ if __name__ == "__main__":
     
     #print(dc.score_point(np.array([50,50])))
     import sys
-    dc.score_all('pydevd' not in sys.modules)
+    #dc.score_all('pydevd' not in sys.modules)
     
-    dc.find_corner(np.array([50,70]))
-    #dc.find_corners()#'pydevd' not in sys.modules)
+    #dc.find_corner(np.array([50,70]))
+    
+    dc.find_corners()#'pydevd' not in sys.modules)
 
     if dc.scored is not None:
         sc = dc.scored
@@ -320,7 +308,7 @@ if __name__ == "__main__":
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
     #show_img(paint_zones(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
-    show_img(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc))
+    show_img(paint_basins(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
     show_img(sc)
     show_img(paint_corners(sc, dc))
 

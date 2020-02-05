@@ -66,12 +66,12 @@ def paint_rays(img, dc: DonutCorners, point):
     return paint_donut(img, dc.bake_donut(point))
 
 
-def paint_zones(img, dc: DonutCorners):
+def paint_basins(img, dc: DonutCorners):
     n=1
-    s1 = np.pad(dc.zones[:,:-n], ((0,0),(n,0)), mode='constant', constant_values = -1)
-    s2 = np.pad(dc.zones[:-n,:], ((n,0),(0,0)), mode='constant', constant_values = -1)
+    s1 = np.pad(dc.basins[:,:-n], ((0,0),(n,0)), mode='constant', constant_values = -1)
+    s2 = np.pad(dc.basins[:-n,:], ((n,0),(0,0)), mode='constant', constant_values = -1)
 
-    add_img = ((dc.zones != s1) | (dc.zones != s2)).astype(int)
+    add_img = ((dc.basins != s1) | (dc.basins != s2)).astype(int)
     
     add_img = np.pad(add_img[:,:,None], ((0,0),(0,0),(2,0)), mode='edge')
 
@@ -79,18 +79,19 @@ def paint_zones(img, dc: DonutCorners):
 
 
 def paint_corners(img, dc: DonutCorners):
-    add_img = np.zeros_like(img)
+    add_img = np.zeros_like(img, dtype=float)
 
     for point in dc.corners:
         add_img[point[1][0], point[1][1], :] = point[0]
 
-        if dc.eval_method['sectional']:
-            score, angles, beam_strengths, beam_ids = dc.score_point(point[1])
-            for angle, strength in zip(angles, beam_strengths):
-                #paint rays
-                pass
+        # if dc.eval_method['sectional']:
+        #     score, angles, beam_strengths, beam_ids = dc.score_point(point[1])
+        #     for angle, strength in zip(angles, beam_strengths):
+        #         #paint rays
+        #         pass
     
-    add_img = (add_img / np.max(add_img) * 255).astype(int)
+    if np.max(add_img) != 0:
+        add_img = (add_img / np.max(add_img) * 255).astype(int)
     
     img[add_img != 0] = add_img[add_img != 0]
     return img

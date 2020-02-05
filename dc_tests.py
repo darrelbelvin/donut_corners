@@ -68,10 +68,10 @@ def test_building(bldg_no = 1, crop = (slice(0,200), slice(650,950)), score_all 
     show_img(paint_corners(sc, dc))
 
 def beam_demo():
-    kwargs = {'angle_count': 8, # must be multiple of 4
-            'beam_count': 8,
+    kwargs = {'angle_count': 16, # must be multiple of 4
+            'beam_count': 16,
             'beam_width': 4,
-            'fork_spread': 6,
+            'fork_spread': 0,
             'beam_length': 30,
             'beam_start': 10,
             'beam_round': True,
@@ -79,25 +79,6 @@ def beam_demo():
             }
     dc = DonutCorners(**kwargs)
     show_beam(dc)
-
-def sobel_demo(bldg_no = 1, beams_show = tuple(range(12)), crop = (slice(0,200), slice(650,950))):
-    img = cv2.imread(f'images/bldg-{bldg_no}.jpg')
-    if crop is not None:
-        img = img[crop]
-    
-    kwargs = {'angle_count': len(beams_show), # must be multiple of 4
-            'beam_count': len(beams_show),
-            'beam_width': 3,
-            'beam_length': 10,
-            'beam_start': 0,
-            'beam_round': True,
-            'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
-            }
-
-    dc = DonutCorners(**kwargs)
-    dc.fit(img)
-    for i in beams_show:
-        show_imgs([dc.src, dc.angled_slopes[i]])
 
 if __name__ == "__main__":
     #test_rigidized()
