@@ -53,7 +53,8 @@ def test_building(bldg_no = 1, crop = (slice(0,200), slice(650,950)), score_all 
         dc.score_all('pydevd' not in sys.modules)
     
     #dc.find_corner(np.array([50,70]))
-    dc.find_corners()#'pydevd' not in sys.modules)
+    #dc.find_corners()#'pydevd' not in sys.modules)
+    dc.find_corners_grid()
 
     if dc.scored is not None:
         sc = dc.scored

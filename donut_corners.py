@@ -3,6 +3,8 @@ import numpy as np
 from scipy import optimize
 from scipy.optimize._minimize import _minimize_neldermead
 
+from collections import deque
+
 from multiprocessing import Pool, cpu_count
 from math import pi
 import random
@@ -35,7 +37,7 @@ class DonutCorners():
         self.eval_method = {'sectional': False, 'elimination_width': self.beam_count // 30, 'max_n': 3, 'elim_double_ends': False}
 
         # grid params
-        self.grid_size = 20
+        self.grid_size = 30
         self.min_corner_score = 0
         
         self.__dict__.update(kwargs)
@@ -44,6 +46,7 @@ class DonutCorners():
 
         self.scored = None
         self.scored_partial = None
+        self.point_info = None
         self.basins = None
         self.corners = None
 
@@ -60,6 +63,7 @@ class DonutCorners():
         self.dims = np.array(self.src.shape[:2], dtype=int)
         self.scored_partial = np.empty(self.dims)
         self.scored_partial[:] = np.NaN
+        self.point_info = {}
         self.basins = np.zeros(self.dims, dtype=int)
         self.corners = []
 
@@ -88,13 +92,14 @@ class DonutCorners():
                 raise ValueError("I need an image shape!")
         
         w = img_list.shape[1]
-        with_features = np.empty((img_list.shape[0], w + self.search_args["top_n"] * 3))
+        with_features = np.empty((img_list.shape[0], w + self.search_args["top_n"] * 7))
         with_features[:, :w] = img_list
         with_features[:, w:] = np.nan
 
         for i, img in enumerate(img_list):
             self.init(img.reshape(self.search_args["img_shape"]))
-            top = np.array(self.find_corners(**self.search_args)).flatten()
+            top = self.find_corners_grid(**self.search_args)
+            top = np.hstack([np.hstack((c[0], (c[1][0],), c[1][1], c[1][2])).flatten() for c in top])
             with_features[i,w:w + len(top)] = top
             print(f'{i/img_list.shape[0]:.2%}', end='\r')
 
@@ -150,11 +155,22 @@ class DonutCorners():
 
 
     # scoring methods
-    def get_score(self, point):
+    def get_score(self, point, inform=False):
         point = np.array(point, dtype=int)
 
-        if not np.all((point >= 0) & (point < self.src.shape[:-1])):
+        if self.out_of_bounds(point):
             return 0
+        
+        if inform:
+            tp = tuple(point)
+            if tp in self.point_info:
+                return self.point_info[tp][0], self.point_info[tp], True
+
+            info = self.score_point(point)
+            self.point_info[tp] = info
+            self.scored_partial[point[0],point[1]] = info[0]
+            return info[0], info, False
+
         if self.scored is not None:
             return self.scored[point[0],point[1]]
         
@@ -260,12 +276,131 @@ class DonutCorners():
         top = np.argsort(strengths)[-1:-top_n-1:-1] # make strongest first
         return [self.corners[i] for i in top]
     
+
+    def out_of_bounds(self, point):
+        return not np.all((point >= 0) & (point < self.src.shape[:-1]))
+        
+
+    def search_rays(self, point, angles, dists, info):
+        best_v, best_p, best_i, best_info = info[0], point, -1, info
+        for angle in angles:
+            for new_i, dist in enumerate(dists):
+                new_p = point + np.round(dist*np.array((np.sin(angle),np.cos(angle)))).astype(int)
+                assert not np.all(new_p == point)
+                if self.out_of_bounds(new_p):
+                    continue
+                new_v, new_info, exist = self.get_score(new_p, True)
+                assert new_info is not None
+                # if exist:
+                #     # this point has already been part of a search, stop searching neighbors
+                #     return
+                if new_v > best_v:
+                    best_v, best_p, best_i, best_info = new_v, new_p, new_i, new_info
+        if best_i == -1:
+            mode = -1
+        elif best_i == 0 or best_i == len(angles) - 1:
+            mode = 0
+        else:
+            mode = 1
+        return (mode, best_p, best_info)
+    
+    
+    def find_corners_grid(self, multithread = False, min_grid=0.1, top_n=10, **kwargs):
+        #from queue import Queue
+        #q = Queue()
+        q = deque()
+
+        std_rays = np.swapaxes(np.mgrid[-1:2,-1:2], 0,2)
+        std_rays = np.delete(std_rays, (8,9)).reshape(-1,2)
+        
+        if 'single_point' in kwargs:
+            q.append((1, kwargs['single_point'], None))
+
+        else:
+            grid = np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
+                    self.grid_size//2:self.dims[1]:self.grid_size]
+            # grid_size = grid.shape[:2]
+            grid_points = np.swapaxes(grid, 0,2).reshape(-1,2)
+
+            for point in grid_points:
+                q.append((1, point, None))
+        
+        brute_angles = np.math.pi * np.arange(8) / 4
+        mode_points_tried = set()
+
+        def add(data):
+            tp = (data[0],) + tuple(data[1])
+            if tp not in mode_points_tried:
+                mode_points_tried.add(tp)
+                q.append(data)
+
+        print(" x".ljust(8)," y".ljust(8), "queue".rjust(8))
+
+        while True:
+            mode, point, info = q.popleft()
+            # info = score, angles, beam_strengths, beam_ids
+
+            if mode == 1: # initial grid point
+                val, info, _ = self.get_score(point, True)
+                if val > min_grid:
+                    add((2, point, info))
+
+            else:
+                if mode == 2: # following rays long dist
+                    dists = np.array((-0.7, -0.5, -0.3, 0.3 ,0.5 ,0.7))*self.beam_length
+                    angles = info[1]
+                    
+                elif mode == 3: # following rays short dist
+                    dists = (-5.6, -2.8, -1.4, 1.4 ,2.8 ,5.6)
+                    angles = info[1]
+
+                elif mode == 4: # brute force immideate area
+                    dists = (1.4,)
+                    angles = brute_angles
+                
+                elif mode == 5: # check super long dist rays for other corners
+                    dists = np.array((-2,-1.5,-1, 1, 1.5, 2))*self.beam_length
+                    angles = info[1]
+            
+                mode_add, point2, info2 = self.search_rays(point, angles, dists, info)
+
+                if mode_add == -1 and mode == 4: # found a local max
+                    self.corners.append((info2[0], point2, info2))
+                    
+                    info2 = (info2[0]*0.5,) + info2[1:] # don't disqualify points slightly weaker than this in edge following
+                    add((5, point2, info2))
+
+                elif mode == 5: # looking for potential other corners
+                    if mode_add != -1: # found one
+                        add((2, point2, info2))
+  
+                #elif tuple(point2) not in self.point_info: # don't search it again if we've already been here
+                else:
+                    mode += abs(mode_add)
+                    add((mode, point2, info2))
+
+            print(str(point[0]).ljust(8),str(point[1]).ljust(8), str(len(q)).rjust(8), end='\r')
+            if len(q) == 0:
+                break
+
+            # if q.qsize() == 0:
+            #     q.join()
+            #     if q.qsize() == 0:
+            #         break
+
+
+        strengths = [a[0] for a in self.corners]
+        top = np.argsort(strengths)[-1:-top_n-1:-1] # make strongest first
+        return [self.corners[i] for i in top]
+
+
 if __name__ == "__main__":
     from visualizing_donut_corners import *
-    img = cv2.imread('images/bldg-1.jpg')
+    #img = cv2.imread('images/bldg-2.jpg')
+    img = cv2.imread('images/legos_examples/4.jpg')
     #img = cv2.imread('images/tex-1.JPG')
     #crop
-    img = img[:200, 650:950]
+    #img = img[:200, 650:950]
     #img = img[500:1500:5, 500:1500:5]
 
     kwargs = {'angle_count': 12 * 4,
@@ -280,17 +415,24 @@ if __name__ == "__main__":
 
     dc = DonutCorners(**kwargs)
     dc.init(img)
-    print(dc.score_point(np.array([50,50])))
+    print(dc.get_score(np.array([50,50])))
 
     #show_beam(dc)
     
     #print(dc.score_point(np.array([50,50])))
     import sys
-    dc.score_all('pydevd' not in sys.modules)
+    #dc.score_all('pydevd' not in sys.modules)
     
-    #dc.find_corner(np.array([50,70]))
+    #print(dc.find_corner(np.array([50,70])))
+    dc.find_corners_grid(min_grid=0.1)
     
-    print(dc.find_corners())#'pydevd' not in sys.modules)
+    # for _ in range(10):
+    #     point = np.random.randint(0,200,size=2)
+    #     dc.find_corners_grid(single_point = point, min_grid=0.1)
+
+    #print(dc.find_corners_grid(single_point = np.array([150,70]), min_grid=0.1))
+    #dc.find_corners_grid()
+    #print(dc.find_corners())#'pydevd' not in sys.modules)
 
     if dc.scored is not None:
         sc = dc.scored
@@ -299,10 +441,10 @@ if __name__ == "__main__":
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
-    #show_img(paint_zones(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
-    show_img(paint_basins(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc), dc))
-    show_img(sc)
-    show_img(paint_basins(paint_corners(sc, dc), dc))
+    # show_img(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc))
+    # show_img(sc)
+    show_imgs((dc.src[...,[2,1,0]], paint_corners(sc + (dc.src[...,[2,1,0]]/10).astype(int), dc)))
+
 
     #show_std(dc)
     
