@@ -1,17 +1,11 @@
 from skimage import io
 import numpy as np
-from scipy import optimize
-from scipy.optimize._minimize import _minimize_neldermead
 
 from collections import deque
 
-from multiprocessing import Pool, cpu_count
+#from multiprocessing import Pool, cpu_count
 from math import pi
 import random
-
-import sys
-sys.path.append('..')
-from simplex_descent_quantized.simplex_descent_quantized import simplex_descent_quantized
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -146,7 +140,9 @@ class DonutCorners():
         # combine
         spiral = prong1 - prong2
         if np.any(np.isnan(spiral)):
-            raise ValueError("beam params are invalid. Getting NaNs in kernel")
+            self.beam_length += 1 # this should fix it most of the time
+            self.beam()
+            return
 
         # store
         self.spiral = spiral.astype('float32')
