@@ -62,8 +62,9 @@ def paint_corners(img, dc: DonutCorners):
 
     
     if np.max(add_img) != 0:
-        add_img = (add_img / np.max(add_img) * 255).astype(int)
-    
+        add_img = (add_img / np.max(add_img) * 255)
+    add_img = add_img.astype(int)
+
     img[add_img != 0] += add_img[add_img != 0]
     return (img / np.max(img) * 255).astype(int)
     return np.max(np.array([img, add_img]), axis=0)
