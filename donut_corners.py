@@ -1,4 +1,4 @@
-import cv2
+from skimage import io
 import numpy as np
 from scipy import optimize
 from scipy.optimize._minimize import _minimize_neldermead
@@ -56,7 +56,7 @@ class DonutCorners():
 
     def init(self, image):
         if isinstance(image, str):
-            self.src = cv2.imread(image)
+            self.src = io.imread(image)
         else:
             self.src = image
         
@@ -396,9 +396,9 @@ class DonutCorners():
 
 if __name__ == "__main__":
     from visualizing_donut_corners import *
-    #img = cv2.imread('images/bldg-2.jpg')
-    img = cv2.imread('images/legos_examples/4.jpg')
-    #img = cv2.imread('images/tex-1.JPG')
+    #img = io.imread('images/bldg-2.jpg')
+    img = io.imread('images/legos_examples/4.jpg')
+    #img = io.imread('images/tex-1.JPG')
     #crop
     #img = img[:200, 650:950]
     #img = img[500:1500:5, 500:1500:5]
@@ -440,9 +440,9 @@ if __name__ == "__main__":
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
-    # show_img(paint_corners(np.maximum(dc.src[...,[2,1,0]], sc), dc))
+    # show_img(paint_corners(np.maximum(dc.src, sc), dc))
     # show_img(sc)
-    show_imgs((dc.src[...,[2,1,0]], paint_corners(sc + (dc.src[...,[2,1,0]]/10).astype(int), dc)))
+    show_imgs((dc.src, paint_corners(sc + (dc.src/10).astype(int), dc)))
 
 
     #show_std(dc)
