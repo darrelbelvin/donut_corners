@@ -19,30 +19,24 @@ class DonutCorners():
     # pylint: disable=too-many-instance-attributes
     def __init__(self, **kwargs):
         # passed on params
-        self.simplex_args = dict(max_iters = 1000, max_step = 4, initial_simplex_size = 3)
         self.search_args = dict(top_n=10, img_shape=None)
         self.img_shape = None
         self.top_n = None
+        self.engineered_only = False
 
         # beam & lighthouse
         self.angle_count = 12 # must be multiple of 4
-        self.beam_count = self.angle_count * 3
         self.beam_width = 3
         self.fork_spread = 2
         self.beam_length = 30
         self.beam_start = 0
-        self.beam_round = True
         self.beam_width = 2
 
-        self.eval_method = {'sectional': False, 'elimination_width': self.beam_count // 30, 'max_n': 3, 'elim_double_ends': False}
+        self.eval_method = {'elimination_width': self.angle_count // 30, 'max_n': 3, 'elim_double_ends': True}
 
         # grid params
         self.grid_size = 30
         self.min_corner_score = 0
-        
-        self.__dict__.update(kwargs)
-
-        self.beam_diameter = 1 + self.beam_length * 2
 
         self.scored = None
         self.scored_partial = None
@@ -50,6 +44,12 @@ class DonutCorners():
         self.basins = None
         self.corners = None
 
+        self.set_params(**kwargs)
+
+
+    def set_params(self, **kwargs):
+        self.__dict__.update(kwargs)
+        self.beam_diameter = 1 + self.beam_length * 2
         self.baked_angles = np.linspace(0, 2*pi, self.angle_count, endpoint=False)
         self.beam()
 
@@ -75,10 +75,9 @@ class DonutCorners():
             self.bw = np.mean(self.src, axis=-1)
         else:
             self.bw = self.src
-        self.bw = np.pad(self.bw, (
-            (self.beam_length,self.beam_length),(self.beam_length,self.beam_length)),
-             mode='edge').astype('float32')
-    
+        l = int(self.beam_diameter/2)
+        self.bw = np.pad(self.bw, ((l,l),(l,l)),mode='edge').astype('float32')
+
 
     def fit(self, X, y):
         return self
@@ -99,27 +98,28 @@ class DonutCorners():
         for i, img in enumerate(img_list):
             self.init(img.reshape(self.search_args["img_shape"]))
             top = self.find_corners_grid(**self.search_args)
-            top = np.hstack([np.hstack((c[0], (c[1][0],), c[1][1], c[1][2])).flatten() for c in top])
-            with_features[i,w:w + len(top)] = top
-            print(f'{i/img_list.shape[0]:.2%}', end='\r')
+            if len(top) != 0:
+                top = np.hstack([np.hstack(((c[0],), (c[1]), c[2][1], c[2][2])).flatten() for c in top])
+                with_features[i,w:w + len(top)] = top
+            #print(f'{i/img_list.shape[0]:.2%}', end='\r')
 
         means = np.nanmean(with_features, axis=0)
         inds = np.where(np.isnan(with_features))
         with_features[inds] = np.take(means, inds[1])
 
+        if self.engineered_only:
+            return with_features[:, w:]
+        
         return with_features
-
-
-    def set_params(self, **kwargs):
-        self.__dict__.update(kwargs)
 
 
     def beam(self):
         r, d, ir = self.beam_length, self.beam_diameter, self.beam_start
-        w, spr, count = self.beam_width, self.fork_spread, self.beam_count
+        w, spr, count = self.beam_width, self.fork_spread, self.angle_count
 
-        ind = np.array(list(np.ndindex((d,d)))).reshape((d,d,2))
-        delta = ind - r
+        di = int(d)
+        ind = np.array(list(np.ndindex((di,di)))).reshape((di,di,2))
+        delta = ind - d//2
 
         beam_angles = np.linspace(0,2*pi, count, endpoint=False)
         
@@ -145,6 +145,8 @@ class DonutCorners():
 
         # combine
         spiral = prong1 - prong2
+        if np.any(np.isnan(spiral)):
+            raise ValueError("beam params are invalid. Getting NaNs in kernel")
 
         # store
         self.spiral = spiral.astype('float32')
@@ -181,14 +183,12 @@ class DonutCorners():
 
 
     def score_point(self, point):
-        region = self.bw[point[0] : point[0] + self.beam_diameter,
-                         point[1] : point[1] + self.beam_diameter]
+        di = int(self.beam_diameter)
+        region = self.bw[point[0] : point[0] + di,
+                         point[1] : point[1] + di]
         
         interest = [region[beam] for beam in self.spiral_mask]
         means = np.array([np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)])
-
-        if not self.eval_method['sectional']:
-            return (np.mean(means),)
 
         maxs = np.array([DonutCorners.get_max_idx(means, w=self.eval_method['elimination_width'],
                 no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])])
@@ -215,7 +215,7 @@ class DonutCorners():
             vals[(ind + len(vals)//2) % len(vals)] = 0 #eliminate double counting of edges
         
         return [arg, val]
-        
+
 
     def score_row(self, y):
         return [self.score_point([y,x])[0] for x in range(self.src.shape[1])]
@@ -305,7 +305,7 @@ class DonutCorners():
         return (mode, best_p, best_info)
     
     
-    def find_corners_grid(self, multithread = False, min_grid=0.1, top_n=10, **kwargs):
+    def find_corners_grid(self, multithread = False, min_grid=0.01, top_n=10, single_point = None):
         #from queue import Queue
         #q = Queue()
         q = deque()
@@ -313,8 +313,8 @@ class DonutCorners():
         std_rays = np.swapaxes(np.mgrid[-1:2,-1:2], 0,2)
         std_rays = np.delete(std_rays, (8,9)).reshape(-1,2)
         
-        if 'single_point' in kwargs:
-            q.append((1, kwargs['single_point'], None))
+        if single_point is not None:
+            q.append((1, single_point, None))
 
         else:
             grid = np.mgrid[self.grid_size//2:self.dims[0]:self.grid_size,
@@ -334,7 +334,7 @@ class DonutCorners():
                 mode_points_tried.add(tp)
                 q.append(data)
 
-        print(" x".ljust(8)," y".ljust(8), "queue".rjust(8))
+        #print(" x".ljust(8)," y".ljust(8), "queue".rjust(8))
 
         while True:
             mode, point, info = q.popleft()
@@ -379,7 +379,7 @@ class DonutCorners():
                     mode += abs(mode_add)
                     add((mode, point2, info2))
 
-            print(str(point[0]).ljust(8),str(point[1]).ljust(8), str(len(q)).rjust(8), end='\r')
+            #print(str(point[0]).ljust(8),str(point[1]).ljust(8), str(len(q)).rjust(8), end='\r')
             if len(q) == 0:
                 break
 
@@ -409,7 +409,6 @@ if __name__ == "__main__":
             'fork_spread': 1,
             'beam_length': 20,
             'beam_start': 5,
-            'beam_round': True,
             'eval_method': {'sectional': True, 'elimination_width': 6, 'max_n': 3, 'elim_double_ends': True}
             }
 

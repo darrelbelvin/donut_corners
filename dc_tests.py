@@ -11,13 +11,13 @@ def test_rigidized():
             'beam_width': 3,
             'beam_length': 50,
             'beam_start': 15,
-            'beam_round': True,
             'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
             }
 
     dc = DonutCorners(**kwargs)
     dc.init(img)
-    dc.find_corner(np.array([50,70]))
+    # dc.find_corners_grid(single_point = np.array([50,70]))
+    dc.find_corners_grid()
 
     if dc.scored is not None:
         sc = dc.scored
@@ -36,13 +36,13 @@ def test_building(bldg_no = 1, crop = (slice(0,200), slice(650,950)), score_all 
         img = img[crop]
     #img = img[500:1500:5, 500:1500:5]
 
-    kwargs = {'angle_count': 12 * 1, # must be multiple of 4
-            'beam_count': 12 * 1,
+    kwargs = {'angle_count': 12 * 4,
+            'beam_count': 12 * 4,
             'beam_width': 2,
-            'beam_length': 20,
+            'fork_spread': 1,
+            'beam_length': 20.5,
             'beam_start': 5,
-            'beam_round': True,
-            'eval_method': {'sectional': False, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
+            'eval_method': {'sectional': True, 'elimination_width': 6, 'max_n': 3, 'elim_double_ends': True}
             }
 
     dc = DonutCorners(**kwargs)
@@ -75,16 +75,29 @@ def beam_demo():
             'fork_spread': 0,
             'beam_length': 30,
             'beam_start': 10,
-            'beam_round': True,
             'eval_method': {'sectional': True, 'elimination_width': 7, 'max_n': 2, 'elim_double_ends': True}
             }
     dc = DonutCorners(**kwargs)
     show_beam(dc)
 
+def beam_demo_small():
+    kwargs = {'angle_count': 12 * 1, # must be multiple of 4
+            'beam_count': 12 * 1,
+            'beam_width': 1.5,
+            'fork_spread': 1.2,
+            'beam_length': 4.3,
+            'beam_start': 0.5,
+            'grid_size': 4,
+            'search_args': dict(img_shape=(8,8), min_grid=0.1, top_n=2),
+            'eval_method': {'sectional': True, 'elimination_width': 2, 'max_n': 2, 'elim_double_ends': True},
+            }
+    dc = DonutCorners(**kwargs)
+    show_beam(dc)
+
 if __name__ == "__main__":
-    #test_rigidized()
-    test_building(1, score_all=True)
+    test_rigidized()
+    #test_building(1, score_all=False)
     #test_building(1, None, score_all=False)
     #test_building(2, (slice(1000,1300), slice(1000,1300)), False)
-    #beam_demo()
+    #beam_demo_small()
     #sobel_demo()
