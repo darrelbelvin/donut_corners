@@ -305,7 +305,7 @@ class DonutCorners():
         return (mode, best_p, best_info)
     
     
-    def find_corners_grid(self, multithread = False, min_grid=0.01, top_n=10, single_point = None):
+    def find_corners_grid(self, multithread = False, min_grid=0.01, top_n=10, single_point = None, **kwargs):
         #from queue import Queue
         #q = Queue()
         q = deque()
