@@ -44,21 +44,28 @@ def paint_basins(img, dc: DonutCorners):
 
 def paint_corners(img, dc: DonutCorners):
     add_img = np.zeros_like(img, dtype=float)
+    #di = int(dc.beam_diameter)
 
     for point in dc.corners:
         add_img[point[1][0], point[1][1], :] = point[0]
 
-        # if dc.eval_method['sectional']:
-        #     score, angles, beam_strengths, beam_ids = dc.score_point(point[1])
-        #     for angle, strength in zip(angles, beam_strengths):
-        #         #paint rays
-        #         pass
+        # region = add_img[point[0] : point[0] + di,
+        #                  point[1] : point[1] + di, 1]
+
+        score, angles, beam_strengths, beam_ids = point[2]
+        #beam_strengths = beam_strengths / np.max(beam_strengths)
+        for angle, strength in zip(angles, beam_strengths):
+            for r in range(int(dc.beam_start), int(dc.beam_length)):
+                ray_point = point[1] + np.round(r*np.array((np.sin(angle),np.cos(angle)))).astype(int)
+                if not dc.out_of_bounds(ray_point):
+                    add_img[ray_point[0], ray_point[1], 1] = strength
+
     
     if np.max(add_img) != 0:
         add_img = (add_img / np.max(add_img) * 255).astype(int)
     
-    img[add_img != 0] = add_img[add_img != 0]
-    return img
+    img[add_img != 0] += add_img[add_img != 0]
+    return (img / np.max(img) * 255).astype(int)
     return np.max(np.array([img, add_img]), axis=0)
 
 

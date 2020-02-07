@@ -3,7 +3,7 @@ import numpy as np
 
 from collections import deque
 
-#from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count
 from math import pi
 import random
 
@@ -19,7 +19,7 @@ class DonutCorners():
         self.engineered_only = False
 
         # beam & lighthouse
-        self.angle_count = 12 # must be multiple of 4
+        self.angle_count = 12
         self.beam_width = 3
         self.fork_spread = 2
         self.beam_length = 30
@@ -30,7 +30,7 @@ class DonutCorners():
 
         # grid params
         self.grid_size = 30
-        self.min_corner_score = 0
+        self.min_corner_score = 0.1
 
         self.scored = None
         self.scored_partial = None
@@ -140,7 +140,8 @@ class DonutCorners():
         # combine
         spiral = prong1 - prong2
         if np.any(np.isnan(spiral)):
-            self.beam_length += 1 # this should fix it most of the time
+            self.beam_width += 0.2
+            self.beam_length += 0.5 # this should fix it most of the time
             self.beam()
             return
 
@@ -166,7 +167,7 @@ class DonutCorners():
 
             info = self.score_point(point)
             self.point_info[tp] = info
-            self.scored_partial[point[0],point[1]] = info[0]
+            self.scored_partial[point[0], point[1]] = info[0]
             return info[0], info, False
 
         if self.scored is not None:
@@ -186,8 +187,11 @@ class DonutCorners():
         interest = [region[beam] for beam in self.spiral_mask]
         means = np.array([np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)])
 
-        maxs = np.array([DonutCorners.get_max_idx(means, w=self.eval_method['elimination_width'],
-                no_doubles = self.eval_method['elim_double_ends']) for _ in range(self.eval_method['max_n'])])
+        w=self.eval_method['elimination_width']
+        no_doubles = self.eval_method['elim_double_ends']
+
+        maxs = np.array([DonutCorners.get_max_idx(means, w=w,
+                no_doubles = no_doubles) for _ in range(self.eval_method['max_n'])])
 
         beam_strengths = maxs[:,1]
         beam_ids = maxs[:,0].astype(int)
@@ -301,10 +305,11 @@ class DonutCorners():
         return (mode, best_p, best_info)
     
     
-    def find_corners_grid(self, multithread = False, min_grid=0.01, top_n=10, single_point = None, **kwargs):
+    def find_corners_grid(self, multithread = False, top_n=10, single_point = None, **kwargs):
         #from queue import Queue
         #q = Queue()
         q = deque()
+        bl = self.beam_length
 
         std_rays = np.swapaxes(np.mgrid[-1:2,-1:2], 0,2)
         std_rays = np.delete(std_rays, (8,9)).reshape(-1,2)
@@ -338,16 +343,16 @@ class DonutCorners():
 
             if mode == 1: # initial grid point
                 val, info, _ = self.get_score(point, True)
-                if val > min_grid:
+                if val > self.min_corner_score:
                     add((2, point, info))
 
             else:
                 if mode == 2: # following rays long dist
-                    dists = np.array((-0.7, -0.5, -0.3, 0.3 ,0.5 ,0.7))*self.beam_length
+                    dists = (0.3*bl ,0.5*bl ,0.7*bl)
                     angles = info[1]
                     
                 elif mode == 3: # following rays short dist
-                    dists = (-5.6, -2.8, -1.4, 1.4 ,2.8 ,5.6)
+                    dists = (1.4 ,2.8 ,5.6)
                     angles = info[1]
 
                 elif mode == 4: # brute force immideate area
@@ -355,9 +360,11 @@ class DonutCorners():
                     angles = brute_angles
                 
                 elif mode == 5: # check super long dist rays for other corners
-                    dists = np.array((-2,-1.5,-1, 1, 1.5, 2))*self.beam_length
+                    dists = (1*bl, 1.5*bl, 2*bl)
                     angles = info[1]
-            
+
+                if self.eval_method['elim_double_ends'] and mode != 4:
+                    dists = tuple(-1 * d for d in dists[::-1]) + dists
                 mode_add, point2, info2 = self.search_rays(point, angles, dists, info)
 
                 if mode_add == -1 and mode == 4: # found a local max
