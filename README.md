@@ -1,35 +1,118 @@
-# donut-corners
-An experimental corner detection method.
+# Donut Corners
+### Darrel Belvin
 
-Donut Corners is a corner detection method using the following srategy:
+![Image Not Found](./figures/try1_all.png "Results Example")
 
-1. Calculate the sobel gradient of the image
-2. Locate peaks in the sobel gradient
-3. Pick a point to evaluate
-4. Project rays from said point to surrounding peaks in the sobel gradient
-5. Determine if said rays coincide with edges by averaging the component of the sobel gradient perpendicular to the ray
-6. Take the n rays that most strongly coincide with edges while filtering out rays that are too close together
-7. Calculate a 'corner score' for our point by averaging the strength of the strongest rays
-8. Use a gradient ascent algorithm on the result from steps 3-7 to find local maxima of the 'corner score'. These local maxima are our corners.
+An experimental corner detection method utilizing a multi-layer kernel.
 
-## Project Objective
-I wanted to create a novel method for detecting corners in images.
+## Table of Contents
+1. [Background](#Background)
+1. [Method Evolution](#MethodEvolution)
+1. [Sci-Kit Integration](#Sci-KitIntegration)
+1. [Visualization Methods](#VisualizationMethods)
 
-I wanted to use only cv2 and numpy.
+## Background
+Let's go backwards:
+- I want to teach computers to recognize the shape of objects and rooms and such so they can interact with our world easier.
+- I envision a computer vision algorithm that can quickly process an image into a low poly model of the objects and environment in that image.
+- That loy poly model will be made up of faces bounded by vertices and edges and could be created based off of the location of corners in the image and the directions of the edges coming out of those corners.
+- As a baby step in that direction I decided to make a method that detects corners and edge directions associated with those corners.
 
-I wanted to be done in under a week.
+## Method Evolution
+From the beginning my method has consisted of
+1. A scoring function that takes in pixel coordinates and outputs a score related to the probability that that pixel is a corner, and
+2. Some method of finding local maxima of the scoring function
 
-Oh, how mislead I was...
+### Scoring Function Evolution
+1. Initial Attempt
+    - Sobel X & Y
+    - Peaks as points of interest
+    - Find points of interest in ring around point
+    - Make rays from peaks to point
+    - Take the component of the sobel perpendicular to array along ray length
+    - Average that component for all rays and return as score
+2. Pre-baked sobel angles in every direction
+3. Replace rays with multi-layer kernel on sobel
+4. Change kernel shape and apply to original image to remove pre-baking
 
+### Optimization Function Evolution
+1. Crappy home-made gradient descent
+2. Use scipy.optimize's Nelder-Mead with early stopping
+3. Made a quantized simplex descent algorithm
+4. Added Basin Mapping to find all local maxima and not repeat searches
+5. Made an edge-following optimizer
 
-## Target Audience
-Object detection is central to many fields including robotics, self driving cars, inventorying and more.
+## Sci-Kit Integration
 
-Phil Keller’s Lego part cataloguer might benefit from good corner detection.
+Donut Corners is able to be used as a transformer in sci-kit learn pipelines. This required the implementation of:
+- fit(X, y)
+    - doesn't do anything. Donut Corners doesn't have any parameters that could be fit to a dataset.
+- transform(X, img_shape = None)
+    - runs corner detection and appends results as new columns
+    - requires either image_shape passed as a parameter or for the img_shape property to be set on the object
+    - if engineered_only is passed or set on object, corner result featured are returned by themselves
+- set_params(**kwargs)
+    - allows hyperparameter optimizers to modify parameters in-between runs
 
-I have a personal project that would benefit from good corner detection.
+The result is that the following code runs as expected:
+```py
+pipe = Pipeline([
+    ('corners', DonutCorners(**dc_kwargs)),
+    ('model', SomeModel())
+])
 
-## Problems
-1. The corner score algorithm is very computationally expensive.
-2. I was unable to find a decent optimizer that will work for this project in the time alotted.
-3. My homemade gradient ascent algorithm is pathetically inefficient.
+searcher = GridSearchCV(pipe,
+    # Search space specification 
+)
+
+searcher.fit(X_train, y_train)
+```
+
+#### I actually did this:
+Using a bayseian search, I optimized DonutCorner's hyperparameters on the MNIST handwritten images dataset and a SVC model looking at only the engineered features.<br>
+It converged nicely like this:
+![Image Not Found](figures/MNIST_convergence.png)
+
+- log-loss validation score: 1.25
+- Best parameters:
+    - corners__fork_spread = 4.0
+    - corners__beam_width = 4.04
+    - corners__beam_length = 6.17
+    - corners__beam_start = 0.86
+    - corners__angle_count = 12
+
+## Visualization Methods
+
+### Interactive Demo for the First Iteration
+There is an awesome interactive demo for an early version of Donut Corners. Here's how to run it
+```
+git checkout early-presentation
+python donut_dash.py
+```
+![Image Not Found](./figures/donut_dash.png "Interactive Visualization")
+
+I have plans to make something similar for the current iteration, that has not happened yet though.
+
+### Results Visualization
+
+There is one method used to visualize the results of Donut Corners
+```py
+paint_corners(img, dc: DonutCorners)
+    """
+    Combine the results of a Donut Corners object with a given image. 
+  
+    This will add a white dot at each corner location with brightness dependant on the corner score and green lines along the top rays with brightness dependant on the ray score.
+  
+    Parameters: 
+    img (ndarray): The image to be added to
+
+    dc (DonutCorners): A donut Corners object
+  
+    Returns: 
+    img (ndarray): The resulting image
+    """
+```
+
+### Kernel Visualization
+I made a method to visualize my kernel, here's an example of a kernel:
+![Image Not Found](./figures/kernel_1.png "Results Example")
