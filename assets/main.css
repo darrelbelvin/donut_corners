@@ -1,8 +1,12 @@
 .multiline p {white-space: pre ; display: block; unicode-bidi: embed}
 
-.pre {border: thin lightgrey solid; overflow-x: scroll }
+.main {}
 
-.section {width: 33%}
+.pre {border: thin lightgrey solid; overflow-x:auto ; text-align: center;}
+
+/* .columns {display: flex} */
+
+.section {width: 70%;}
 
 .container {width: 100%; padding-top: 100%; position: relative;}
 
