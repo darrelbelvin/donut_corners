@@ -16,7 +16,7 @@ An experimental corner detection method utilizing a multi-layer kernel.
 Let's go backwards:
 - I want to teach computers to recognize the shape of objects and rooms and such so they can interact with our world easier.
 - I envision a computer vision algorithm that can quickly process an image into a low poly model of the objects and environment in that image.
-- That loy poly model will be made up of faces bounded by vertices and edges and could be created based off of the location of corners in the image and the directions of the edges coming out of those corners.
+- That low poly model will be made up of faces bounded by vertices and edges and could be created based off of the location of corners in the image and the directions of the edges coming out of those corners.
 - As a baby step in that direction I decided to make a method that detects corners and edge directions associated with those corners.
 
 ## Method Evolution

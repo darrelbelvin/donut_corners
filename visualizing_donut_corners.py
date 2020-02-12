@@ -25,11 +25,6 @@ def show_imgs(imgs):
     plt.show()
 
 
-def get_2dimg(dc, imgtype = 'slopes'):
-    img = {'slopes': dc.slopes, 'interest': dc.interest * 255}[imgtype]
-    return np.pad(img,((0,0),(0,0),(1,0)), mode='constant')
-
-
 def paint_basins(img, dc: DonutCorners):
     n=1
     s1 = np.pad(dc.basins[:,:-n], ((0,0),(n,0)), mode='constant', constant_values = -1)
@@ -63,7 +58,7 @@ def paint_corners(img, dc: DonutCorners):
     
     if np.max(add_img) != 0:
         add_img = (add_img / np.max(add_img) * 255)
-    add_img = add_img.astype(int)
+    add_img = add_img.astype(img.dtype)
 
     img[add_img != 0] += add_img[add_img != 0]
     return (img / np.max(img) * 255).astype(int)
@@ -74,7 +69,9 @@ def show_beam(dc: DonutCorners):
     show_3d_kernel(dc.spiral)
 
 
-def show_3d_kernel(arr):
+def show_3d_kernel(arr, ret=False):
     points = np.array(list(np.ndindex(arr.shape)))[arr.flatten() != 0]
     fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=arr[points[:,0], points[:,1], points[:,2]], opacity=0.5)
+    if ret:
+        return fig
     fig.show()

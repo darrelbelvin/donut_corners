@@ -41,11 +41,11 @@ class DonutCorners():
         self.set_params(**kwargs)
 
 
-    def set_params(self, **kwargs):
+    def set_params(self, self_correct=True, **kwargs):
         self.__dict__.update(kwargs)
         self.beam_diameter = 1 + self.beam_length * 2
         self.baked_angles = np.linspace(0, 2*pi, self.angle_count, endpoint=False)
-        self.beam()
+        self.beam(self_correct)
 
 
     def init(self, image):
@@ -77,7 +77,7 @@ class DonutCorners():
         return self
     
 
-    def transform(self, img_list, img_shape=None):
+    def transform(self, img_list, img_shape=None, engineered_only=False):
         if self.search_args["img_shape"] is None:
             if img_shape:
                 self.search_args["img_shape"] = img_shape
@@ -101,13 +101,13 @@ class DonutCorners():
         inds = np.where(np.isnan(with_features))
         with_features[inds] = np.take(means, inds[1])
 
-        if self.engineered_only:
+        if self.engineered_only or engineered_only:
             return with_features[:, w:]
         
         return with_features
 
 
-    def beam(self):
+    def beam(self, self_correct=True):
         r, d, ir = self.beam_length, self.beam_diameter, self.beam_start
         w, spr, count = self.beam_width, self.fork_spread, self.angle_count
 
@@ -140,10 +140,12 @@ class DonutCorners():
         # combine
         spiral = prong1 - prong2
         if np.any(np.isnan(spiral)):
-            self.beam_width += 0.2
-            self.beam_length += 0.5 # this should fix it most of the time
-            self.beam()
-            return
+            if self_correct:
+                self.beam_width += 0.2
+                self.beam_length += 0.5 # this should fix it most of the time
+                self.beam()
+                return
+            raise ValueError('invalid beam values, getting nans in kernel')
 
         # store
         self.spiral = spiral.astype('float32')
