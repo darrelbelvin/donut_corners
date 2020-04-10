@@ -8,7 +8,6 @@ import numpy as np
 from dash.dependencies import Input, Output, State
 
 import utils.dash_reusable_components as drc
-import utils.figures as figs
 
 import sys
 sys.path.append('.')
@@ -24,7 +23,7 @@ dash_app = dash.Dash(
     ],
 )
 server = dash_app.server
-
+debug = False
 dc = DonutCorners()
 
 
@@ -78,6 +77,7 @@ dash_app.layout = html.Div(
                                 drc.Card(
                                     id="first-card",
                                     children=[
+                                        html.H4("Kernel Settings"),
                                         drc.NamedSlider(
                                             name="Beam Count",
                                             id="slider-kernel-beam-count",
@@ -119,119 +119,119 @@ dash_app.layout = html.Div(
                                         )
                                     ],
                                 ),
-                                drc.Card(
-                                    id="button-card",
-                                    children=[
-                                        drc.NamedSlider(
-                                            name="Threshold",
-                                            id="slider-threshold",
-                                            min=0,
-                                            max=1,
-                                            value=0.5,
-                                            step=0.01,
-                                        ),
-                                        html.Button(
-                                            "Reset Threshold",
-                                            id="button-zero-threshold",
-                                        ),
-                                    ],
-                                ),
-                                drc.Card(
-                                    id="last-card",
-                                    children=[
-                                        drc.NamedDropdown(
-                                            name="Kernel",
-                                            id="dropdown-svm-parameter-kernel",
-                                            options=[
-                                                {
-                                                    "label": "Radial basis function (RBF)",
-                                                    "value": "rbf",
-                                                },
-                                                {"label": "Linear", "value": "linear"},
-                                                {
-                                                    "label": "Polynomial",
-                                                    "value": "poly",
-                                                },
-                                                {
-                                                    "label": "Sigmoid",
-                                                    "value": "sigmoid",
-                                                },
-                                            ],
-                                            value="rbf",
-                                            clearable=False,
-                                            searchable=False,
-                                        ),
-                                        drc.NamedSlider(
-                                            name="Cost (C)",
-                                            id="slider-svm-parameter-C-power",
-                                            min=-2,
-                                            max=4,
-                                            value=0,
-                                            marks={
-                                                i: "{}".format(10 ** i)
-                                                for i in range(-2, 5)
-                                            },
-                                        ),
-                                        drc.FormattedSlider(
-                                            id="slider-svm-parameter-C-coef",
-                                            min=1,
-                                            max=9,
-                                            value=1,
-                                        ),
-                                        drc.NamedSlider(
-                                            name="Degree",
-                                            id="slider-svm-parameter-degree",
-                                            min=2,
-                                            max=10,
-                                            value=3,
-                                            step=1,
-                                            marks={
-                                                str(i): str(i) for i in range(2, 11, 2)
-                                            },
-                                        ),
-                                        drc.NamedSlider(
-                                            name="Gamma",
-                                            id="slider-svm-parameter-gamma-power",
-                                            min=-5,
-                                            max=0,
-                                            value=-1,
-                                            marks={
-                                                i: "{}".format(10 ** i)
-                                                for i in range(-5, 1)
-                                            },
-                                        ),
-                                        drc.FormattedSlider(
-                                            id="slider-svm-parameter-gamma-coef",
-                                            min=1,
-                                            max=9,
-                                            value=5,
-                                        ),
-                                        html.Div(
-                                            id="shrinking-container",
-                                            children=[
-                                                html.P(children="Shrinking"),
-                                                dcc.RadioItems(
-                                                    id="radio-svm-parameter-shrinking",
-                                                    labelStyle={
-                                                        "margin-right": "7px",
-                                                        "display": "inline-block",
-                                                    },
-                                                    options=[
-                                                        {
-                                                            "label": " Enabled",
-                                                            "value": "True",
-                                                        },
-                                                        {
-                                                            "label": " Disabled",
-                                                            "value": "False",
-                                                        },
-                                                    ],
-                                                    value="True",
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                ),
+                                # drc.Card(
+                                #     id="button-card",
+                                #     children=[
+                                #         drc.NamedSlider(
+                                #             name="Threshold",
+                                #             id="slider-threshold",
+                                #             min=0,
+                                #             max=1,
+                                #             value=0.5,
+                                #             step=0.01,
+                                #         ),
+                                #         html.Button(
+                                #             "Reset Threshold",
+                                #             id="button-zero-threshold",
+                                #         ),
+                                #     ],
+                                # ),
+                                # drc.Card(
+                                #     id="last-card",
+                                #     children=[
+                                #         drc.NamedDropdown(
+                                #             name="Kernel",
+                                #             id="dropdown-svm-parameter-kernel",
+                                #             options=[
+                                #                 {
+                                #                     "label": "Radial basis function (RBF)",
+                                #                     "value": "rbf",
+                                #                 },
+                                #                 {"label": "Linear", "value": "linear"},
+                                #                 {
+                                #                     "label": "Polynomial",
+                                #                     "value": "poly",
+                                #                 },
+                                #                 {
+                                #                     "label": "Sigmoid",
+                                #                     "value": "sigmoid",
+                                #                 },
+                                #             ],
+                                #             value="rbf",
+                                #             clearable=False,
+                                #             searchable=False,
+                                #         ),
+                                #         drc.NamedSlider(
+                                #             name="Cost (C)",
+                                #             id="slider-svm-parameter-C-power",
+                                #             min=-2,
+                                #             max=4,
+                                #             value=0,
+                                #             marks={
+                                #                 i: "{}".format(10 ** i)
+                                #                 for i in range(-2, 5)
+                                #             },
+                                #         ),
+                                #         drc.FormattedSlider(
+                                #             id="slider-svm-parameter-C-coef",
+                                #             min=1,
+                                #             max=9,
+                                #             value=1,
+                                #         ),
+                                #         drc.NamedSlider(
+                                #             name="Degree",
+                                #             id="slider-svm-parameter-degree",
+                                #             min=2,
+                                #             max=10,
+                                #             value=3,
+                                #             step=1,
+                                #             marks={
+                                #                 str(i): str(i) for i in range(2, 11, 2)
+                                #             },
+                                #         ),
+                                #         drc.NamedSlider(
+                                #             name="Gamma",
+                                #             id="slider-svm-parameter-gamma-power",
+                                #             min=-5,
+                                #             max=0,
+                                #             value=-1,
+                                #             marks={
+                                #                 i: "{}".format(10 ** i)
+                                #                 for i in range(-5, 1)
+                                #             },
+                                #         ),
+                                #         drc.FormattedSlider(
+                                #             id="slider-svm-parameter-gamma-coef",
+                                #             min=1,
+                                #             max=9,
+                                #             value=5,
+                                #         ),
+                                #         html.Div(
+                                #             id="shrinking-container",
+                                #             children=[
+                                #                 html.P(children="Shrinking"),
+                                #                 dcc.RadioItems(
+                                #                     id="radio-svm-parameter-shrinking",
+                                #                     labelStyle={
+                                #                         "margin-right": "7px",
+                                #                         "display": "inline-block",
+                                #                     },
+                                #                     options=[
+                                #                         {
+                                #                             "label": " Enabled",
+                                #                             "value": "True",
+                                #                         },
+                                #                         {
+                                #                             "label": " Disabled",
+                                #                             "value": "False",
+                                #                         },
+                                #                     ],
+                                #                     value="True",
+                                #                 ),
+                                #             ],
+                                #         ),
+                                #     ],
+                                # ),
                             ],
                         ),
                         html.Div(
@@ -403,4 +403,8 @@ def update_svm_graph(
 
 # Running the server
 if __name__ == "__main__":
-    dash_app.run_server(debug=True)
+    if debug:
+        dash_app.run_server(debug=True)
+    else:
+        from waitress import serve
+        serve(server, host="0.0.0.0", port=8080)

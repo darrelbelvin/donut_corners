@@ -4,8 +4,9 @@ import numpy as np
 from collections import deque
 
 from multiprocessing import Pool, cpu_count
-from math import pi
+from math import pi, atan2, sqrt
 import random
+# import numba
 
 class DonutCorners():
     rot90 = np.array([[0, -1], [1, 0]])
@@ -69,8 +70,32 @@ class DonutCorners():
             self.bw = np.mean(self.src, axis=-1)
         else:
             self.bw = self.src
-        l = int(self.beam_diameter/2)
-        self.bw = np.pad(self.bw, ((l,l),(l,l)),mode='edge').astype('float32')
+        l = int(self.beam_diameter/2 + 1)
+        # self.bw = np.pad(self.bw, ((l,l),(l,l)),mode='edge').astype('float32')
+        # self.polar = np.empty_like(self.bw)
+        self.polar = DonutCorners.polar_slopes(self.bw)
+        self.polar = np.pad(self.polar, ((l,l),(l,l),(0,0)),mode='constant', constant_values=0)
+    
+    @staticmethod # @numba.jit
+    def polar_slopes(img): #, out):
+        # i, j = cuda.grid(2)
+        # n, m = img.shape
+        # if 1 <= i < n - 1 and 1 <= j < m - 1:
+        #     dx = img[x+2, y+1] - img[x, y+1]
+        #     dy = img[x+1, y+2] - img[x+1, y]
+        #     out[i,j,0] = atan2(dy, dx)
+        #     out[i,j,1] = sqrt(dx**2 + dy**2)
+
+        result = np.empty(tuple(np.array(img.shape)-2) + (2,), dtype='float32')
+        for y, x in np.ndindex(result.shape[:2]):
+
+            #x and y are backwards!!!!
+            dy = img[y, x+1] - img[y+2, x+1]
+            dx = img[y+1, x+2] - img[y+1, x]
+            theta = atan2(dy, dx)
+            l = sqrt(dx**2 + dy**2)
+            result[y,x,:] = theta, l
+        return result
 
 
     def fit(self, X, y):
@@ -117,28 +142,22 @@ class DonutCorners():
 
         beam_angles = np.linspace(0,2*pi, count, endpoint=False)
         
-        beam_uvs = np.stack((np.sin(beam_angles), np.cos(beam_angles)), axis=-1)
+        beam_uvs = np.stack((-np.sin(beam_angles), np.cos(beam_angles)), axis=-1)
         beam_perps = np.matmul(beam_uvs, DonutCorners.rot90)
 
         len_on_line = np.array([delta.dot(uv) for uv in beam_uvs])
         dist_to_line = np.array([delta.dot(perp) for perp in beam_perps])
         
         # make the prongs
-        prong1 = np.maximum(w / 2 - np.abs(dist_to_line - spr / 2), 0)
-        prong2 = np.minimum(-w / 2 + np.abs(dist_to_line + spr / 2), 0)
+        spiral = np.maximum(w / 2 - np.abs(dist_to_line), 0)
 
         # clip to length & side
-        prong1[(len_on_line < ir) | (len_on_line > r) | (dist_to_line <= 0)] = 0
-        prong2[(len_on_line < ir) | (len_on_line > r) | (dist_to_line > 0)] = 0
+        spiral[(len_on_line < ir) | (len_on_line > r)] = 0
 
         # normalize
-        c_1, c_2 = np.sum(prong1 != 0, axis=(1,2)), np.abs(np.sum(prong2 != 0, axis=(1,2)))
-        c_big = np.max(np.array((c_1, c_2)), axis=0)
-        prong1 = prong1 / np.sum(prong1, axis=(1,2))[:, None, None]
-        prong2 = prong2 / np.sum(prong2, axis=(1,2))[:, None, None]
+        spiral = spiral / np.sum(spiral, axis=(1,2))[:, None, None]
 
-        # combine
-        spiral = prong1 - prong2
+        # error checking
         if np.any(np.isnan(spiral)):
             if self_correct:
                 self.beam_width += 0.2
@@ -181,13 +200,20 @@ class DonutCorners():
         return self.scored_partial[point[0],point[1]]
 
 
+    @staticmethod
+    def sharpen(angle1, angle2, power_mult=10):
+        angle_delta = np.abs((angle1 - angle2)%pi - (pi/2))
+        return np.exp(-power_mult*angle_delta)
+
     def score_point(self, point):
         di = int(self.beam_diameter)
-        region = self.bw[point[0] : point[0] + di,
-                         point[1] : point[1] + di]
+        region = self.polar[point[0] : point[0] + di,
+                            point[1] : point[1] + di, :]
         
         interest = [region[beam] for beam in self.spiral_mask]
-        means = np.array([np.abs(np.mean(w * i)) for w, i in zip(self.weights, interest)])
+        sharpened = [self.sharpen(beam[:,0], angle) * beam[:,1]\
+            for angle, beam in zip(self.baked_angles, interest)]
+        means = np.array([np.abs(np.mean(w * i)) for w, i in zip(self.weights, sharpened)])
 
         w=self.eval_method['elimination_width']
         no_doubles = self.eval_method['elim_double_ends']
@@ -210,6 +236,7 @@ class DonutCorners():
         vals[ind] = 0
 
         if gradual:
+            raise NotImplementedError("gradual elimanation not implemented")
             if no_doubles:
                 pass
 
@@ -239,45 +266,8 @@ class DonutCorners():
     
 
     def find_corner(self, point):
+        return self.find_corners_grid(single_point=point)
 
-        def callback(*args, **kwargs):
-            print('Callback')
-            print(args)
-            print(kwargs)
-
-        negative = lambda *args: -1 * self.get_score(*args)
-        result = simplex_descent_quantized(negative, 1, np.array(point, dtype=int), 
-                basin_mapping = True, current_basin_map = self.basins,
-                bounds = np.stack([np.zeros_like(self.dims), self.dims], axis=1), **self.simplex_args)
-
-        # res = np.array([-result['y'], result['x'][0], result['x'][1]])
-        # assert not np.any([np.all(self.corners == c) for c in self.corners])
-
-        if result['exit_cause'] == "maximum found":
-            res = np.array([-result['y'], result['x'][0], result['x'][1]])
-            if not np.any([np.all(res == c) for c in self.corners]):
-                self.corners.append(res)
-                return res
-        
-        return None
-
-
-    def find_corners(self, multithread = False, edge_offset = 5, top_n=10, stop_percent=None, max_rounds=None, **kwargs):
-        i = 0
-        while np.min(self.basins[edge_offset:-edge_offset,edge_offset:-edge_offset]) == 0:
-            true_ind = np.argwhere(self.basins == 0)
-            chosen = np.random.randint(0, true_ind.shape[0])
-            self.find_corner(true_ind[chosen])
-            if stop_percent is not None and np.mean(self.basins != 0) > stop_percent:
-                break
-            if max_rounds is not None and i >= max_rounds:
-                break
-            i += 1
-        
-        strengths = [a[0] for a in self.corners]
-        top = np.argsort(strengths)[-1:-top_n-1:-1] # make strongest first
-        return [self.corners[i] for i in top]
-    
 
     def out_of_bounds(self, point):
         return not np.all((point >= 0) & (point < self.src.shape[:-1]))
@@ -401,17 +391,17 @@ class DonutCorners():
 
 if __name__ == "__main__":
     from visualizing_donut_corners import *
-    #img = io.imread('images/bldg-2.jpg')
-    img = io.imread('images/legos_examples/4.jpg')
+    img = io.imread('images/bldg-1.jpg')
+    #img = io.imread('images/legos_examples/4.jpg')
     #img = io.imread('images/tex-1.JPG')
     #crop
-    #img = img[:200, 650:950]
+    #img = img[50:150,:100]
+    img = img[:200, 650:950]
     #img = img[500:1500:5, 500:1500:5]
 
-    kwargs = {'angle_count': 12 * 4,
-            'beam_count': 12 * 4,
+    kwargs = {'angle_count': 12 * 8,
+            'beam_count': 12 * 8,
             'beam_width': 2,
-            'fork_spread': 1,
             'beam_length': 20,
             'beam_start': 5,
             'eval_method': {'sectional': True, 'elimination_width': 6, 'max_n': 3, 'elim_double_ends': True}
@@ -419,7 +409,8 @@ if __name__ == "__main__":
 
     dc = DonutCorners(**kwargs)
     dc.init(img)
-    print(dc.get_score(np.array([50,50])))
+    print(dc.get_score(np.array([62,8])))
+    print(dc.get_score(np.array([48,33])))
 
     #show_beam(dc)
     
@@ -427,7 +418,7 @@ if __name__ == "__main__":
     import sys
     #dc.score_all('pydevd' not in sys.modules)
     
-    #print(dc.find_corner(np.array([50,70])))
+    print(dc.find_corner(np.array([50,70])))
     dc.find_corners_grid(min_grid=0.1)
     
     # for _ in range(10):
@@ -445,9 +436,14 @@ if __name__ == "__main__":
     sc = sc / np.max(sc) * 255
     sc = np.pad(sc[...,None], ((0,0),(0,0),(0,2)), mode='constant').astype(int)
 
-    # show_img(paint_corners(np.maximum(dc.src, sc), dc))
+    show_img(paint_corners(sc + (dc.src*0.25).astype(int), dc))
     # show_img(sc)
-    show_imgs((dc.src, paint_corners(sc + (dc.src/10).astype(int), dc)))
+    #show_imgs((dc.src, paint_corners(sc + (dc.src/10).astype(int), dc)))
+    #io.imshow_collection((dc.bw, paint_corners(sc + (dc.src*0.25).astype(int), dc)))
+    # io.imshow(dc.bw)
+    # io.show()
+    # io.imshow(paint_corners(sc + (dc.src*0.25).astype(int), dc))
+    # io.show()
 
 
     #show_std(dc)

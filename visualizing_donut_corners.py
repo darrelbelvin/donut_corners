@@ -51,7 +51,7 @@ def paint_corners(img, dc: DonutCorners):
         #beam_strengths = beam_strengths / np.max(beam_strengths)
         for angle, strength in zip(angles, beam_strengths):
             for r in range(int(dc.beam_start), int(dc.beam_length)):
-                ray_point = point[1] + np.round(r*np.array((np.sin(angle),np.cos(angle)))).astype(int)
+                ray_point = point[1] + np.round(r*np.array((-1*np.sin(angle),np.cos(angle)))).astype(int)
                 if not dc.out_of_bounds(ray_point):
                     add_img[ray_point[0], ray_point[1], 1] = strength
 
@@ -71,7 +71,9 @@ def show_beam(dc: DonutCorners):
 
 def show_3d_kernel(arr, ret=False):
     points = np.array(list(np.ndindex(arr.shape)))[arr.flatten() != 0]
-    fig = px.scatter_3d(x=points[:,1], y=points[:,2], z=points[:,0], color=arr[points[:,0], points[:,1], points[:,2]], opacity=0.5)
+    fig = px.scatter_3d(y=points[:,1], x=points[:,2], z=points[:,0], color=arr[points[:,0], points[:,1], points[:,2]], opacity=0.5)
+    fig.update_xaxes(autorange="reversed")
+    #fig.update_layout(dict(xaxis_autorange="reversed"))
     if ret:
         return fig
     fig.show()
