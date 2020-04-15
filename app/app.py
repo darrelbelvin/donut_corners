@@ -1,5 +1,6 @@
 import time
 import importlib
+from skimage import io
 
 import dash
 import dash_core_components as dcc
@@ -14,7 +15,7 @@ sys.path.append('.')
 
 #import donut_corners.donut_corners as donut_corners
 from donut_corners import DonutCorners
-from visualizing_donut_corners import show_3d_kernel
+from visualizing_donut_corners import show_3d_kernel, s
 
 dash_app = dash.Dash(
     __name__,
@@ -23,8 +24,11 @@ dash_app = dash.Dash(
     ],
 )
 server = dash_app.server
-debug = False
+debug = True
 dc = DonutCorners()
+img = io.imread('images/bldg-1.jpg')
+img = img[:200, 650:950]
+dc.init(img)
 
 
 dash_app.layout = html.Div(
@@ -371,6 +375,8 @@ def update_svm_graph(
             )
     
     if tab == 'scoring':
+        kernel_fig = show_slope_polar(dc.polar_slopes, True)
+
         return html.Div([
             html.H2('Scoring Process')
         ])
