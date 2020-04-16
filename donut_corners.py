@@ -71,31 +71,11 @@ class DonutCorners():
         else:
             self.bw = self.src
         l = int(self.beam_diameter/2 + 1)
-        # self.bw = np.pad(self.bw, ((l,l),(l,l)),mode='edge').astype('float32')
-        # self.polar = np.empty_like(self.bw)
-        self.polar = DonutCorners.polar_slopes(self.bw)
+
+        self.uv = np.gradient(self.bw)
+        x, y = self.uv[0], self.uv[1]
+        self.polar = np.stack((np.sqrt(x**2 + y**2), np.arctan2(y, x)))
         self.polar = np.pad(self.polar, ((l,l),(l,l),(0,0)),mode='constant', constant_values=0)
-    
-    @staticmethod # @numba.jit
-    def polar_slopes(img): #, out):
-        # i, j = cuda.grid(2)
-        # n, m = img.shape
-        # if 1 <= i < n - 1 and 1 <= j < m - 1:
-        #     dx = img[x+2, y+1] - img[x, y+1]
-        #     dy = img[x+1, y+2] - img[x+1, y]
-        #     out[i,j,0] = atan2(dy, dx)
-        #     out[i,j,1] = sqrt(dx**2 + dy**2)
-
-        result = np.empty(tuple(np.array(img.shape)-2) + (2,), dtype='float32')
-        for y, x in np.ndindex(result.shape[:2]):
-
-            #x and y are backwards!!!!
-            dy = img[y, x+1] - img[y+2, x+1]
-            dx = img[y+1, x+2] - img[y+1, x]
-            theta = atan2(dy, dx)
-            l = sqrt(dx**2 + dy**2)
-            result[y,x,:] = theta, l
-        return result
 
 
     def fit(self, X, y):

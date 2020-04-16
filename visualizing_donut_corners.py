@@ -86,10 +86,10 @@ def show_3d_kernel(arr, ret=False):
 
 def show_slope_polar(arr, ret = False):
     area = arr.shape[0] * arr.shape[1]
-    max_points = 100
+    max_points = 1000
     step = int((area/max_points)**0.5)
     points = arr[step//2::step, step//2::step, :]
-    y = np.repeat(np.r_[step//2:arr.shape[0]:step], points.shape[1])
+    y = np.repeat(np.r_[arr.shape[0]:step//2:-step], points.shape[1])
     x = np.tile(np.r_[step//2:arr.shape[1]:step], points.shape[0])
     u = (np.cos(points[:,:,0]) * points[:,:,1]).flatten()
     v = (np.sin(points[:,:,0]) * points[:,:,1]).flatten()
@@ -100,6 +100,95 @@ def show_slope_polar(arr, ret = False):
         return fig
     fig.show()
 
+def show_src_slopes(dc: DonutCorners, x0 = 0, x1 = None, y0 = 0, y1 = None, max_points = 1000, scale_factor = 3, ret = False):
+    if x1 is None:
+        x1 = dc.src.shape[1]
+    if y1 is None:
+        y1 = dc.src.shape[0]
+    
+    area = (x1 - x0) * (y1 - y0)
+    if area > max_points:
+        step = int((area/max_points)**0.5)
+    else:
+        step = 1
+    
+    y = np.r_[y1:y0:-step]
+    x = np.r_[x0:x1:step]
+    xv, yv = np.meshgrid(x, y)
+    
+    if y0 == 0:
+        y0 = None
+    u = dc.uv[1][y1:y0:-step, x0:x1:step].flatten()
+    v = dc.uv[0][y1:y0:-step, x0:x1:step].flatten()
+    return show_img_and_quiver(
+        xv.flatten() * scale_factor,
+        (dc.src.shape[0] - yv.flatten()) * scale_factor,
+        u, -v, dc.src, scale_factor, ret)
+
+def show_img_and_quiver(x, y, u, v, img, scale_factor = 3, ret = False):
+    fig = ff.create_quiver(x, y, u, v,
+                       scale=.25,
+                       arrow_scale=.4,
+                       name='quiver',
+                       line_width=1,
+                       marker={'color': 'red'})
+
+    img = Image.fromarray(img)
+
+    # Constants
+    img_width = img.size[0]
+    img_height = img.size[1]
+
+    # Add invisible scatter trace.
+    # This trace is added to help the autoresize logic work.
+    fig.add_trace(
+        go.Scatter(
+            x=[0, img_width * scale_factor],
+            y=[0, img_height * scale_factor],
+            mode="markers",
+            #marker_opacity=0
+        )
+    )
+
+    # Configure axes
+    fig.update_xaxes(
+        visible=False,
+        range=[0, img_width * scale_factor]
+    )
+
+    fig.update_yaxes(
+        visible=False,
+        range=[0, img_height * scale_factor],
+        # the scaleanchor attribute ensures that the aspect ratio stays constant
+        scaleanchor="x"
+    )
+
+    # Add image
+    fig.add_layout_image(
+        dict(
+            x=0,
+            sizex=img_width * scale_factor,
+            y=img_height * scale_factor,
+            sizey=img_height * scale_factor,
+            xref="x",
+            yref="y",
+            opacity=1.0,
+            layer="below",
+            sizing="stretch",
+            source=img)
+    )
+
+    # Configure other layout
+    fig.update_layout(
+        width=img_width * scale_factor,
+        height=img_height * scale_factor,
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+    )
+
+    if ret:
+        return fig
+    fig.show(config={'doubleClick': 'reset'})
+
 
 def show_img_plotly(img, ret = False):
     img = Image.fromarray(img)
@@ -107,9 +196,9 @@ def show_img_plotly(img, ret = False):
     fig = go.Figure()
 
     # Constants
-    img_width = 1600
-    img_height = 900
-    scale_factor = 0.5
+    img_width = img.size[0]
+    img_height = img.size[1]
+    scale_factor = 1
 
     # Add invisible scatter trace.
     # This trace is added to help the autoresize logic work.
@@ -168,9 +257,10 @@ def show_img_plotly(img, ret = False):
 if __name__ == "__main__":
     dc = DonutCorners()
     img = io.imread('images/bldg-1.jpg')
-    img = img[:200, 650:950]
+    img = img[100:200, 850:950]
     dc.init(img)
 
     #show_3d_kernel(dc.spiral)
     #show_img_plotly(dc.src)
-    show_slope_polar(dc.polar)
+    #show_slope_polar(dc.polar)
+    show_src_slopes(dc)
